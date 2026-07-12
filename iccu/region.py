@@ -39,7 +39,7 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
         matched = df.filter(expr)
         if matched.is_empty():
             _fail(f"No libraries found for province code '{code}'.")
-        return RegionFilter(label=label, expr=expr, conflate_regions=_region_of(matched))
+        return RegionFilter(label=label, expr=expr, conflate_regions=_province_of(matched))
 
     # Italian region name
     expr_region = pl.col("regione").str.to_lowercase() == label
@@ -51,7 +51,7 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
     expr_province = pl.col("provincia").str.to_lowercase() == label
     matched = df.filter(expr_province)
     if not matched.is_empty():
-        return RegionFilter(label=label, expr=expr_province, conflate_regions=_region_of(matched))
+        return RegionFilter(label=label, expr=expr_province, conflate_regions=_province_of(matched))
 
     _fail(
         f"'{term}' did not match any region or province in the dataset. "
@@ -62,6 +62,10 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
 
 def _region_of(df: pl.DataFrame) -> str:
     return df["regione"][0]
+
+
+def _province_of(df: pl.DataFrame) -> str:
+    return df["provincia"][0]
 
 
 def _fail(msg: str) -> NoReturn:
