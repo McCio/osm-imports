@@ -1,5 +1,6 @@
 """Run osm-conflate for an ICCU region, producing OSM and GeoJSON change files."""
 
+import logging
 import os
 import re
 import shutil
@@ -97,6 +98,7 @@ def _extra_args(p) -> None:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout, format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
     args = parse_args("Step 4: conflate ICCU data with OSM", region=True, setup=_extra_args)
     regions = parse_regions(args.region)
     if not regions:

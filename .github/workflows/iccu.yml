@@ -35,6 +35,7 @@ jobs:
       OSC: ${{ inputs.osc }}
       OVERPASS_URL: ${{ inputs.overpass_url }}
       CONTACT: https://github.com/${{ github.actor }}
+      PYTHONUNBUFFERED: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.0
