@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Pipeline data (large files, not committed)
+data/*
+!data/dbsn/
+data/dbsn/*
+!data/dbsn/sources.json
+
+# Reference file (temporary, local-only files)s
+reference/
+
+# IDE
+.idea/

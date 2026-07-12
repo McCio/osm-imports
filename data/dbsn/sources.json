@@ -1,0 +1,974 @@
+{
+  "AG": {
+    "province": "Agrigento",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AG_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AG_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AL": {
+    "province": "Alessandria",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AL_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AL_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AN": {
+    "province": "Ancona",
+    "region": "Marche",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AO": {
+    "province": "Aosta",
+    "region": "Valle d'Aosta",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AP": {
+    "province": "Ascoli Piceno",
+    "region": "Marche",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AP_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AP_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AQ": {
+    "province": "L'Aquila",
+    "region": "Abruzzo",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AQ_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AQ_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AR": {
+    "province": "Arezzo",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AT": {
+    "province": "Asti",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AT_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AT_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "AV": {
+    "province": "Avellino",
+    "region": "Campania",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/AV_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/AV_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BA": {
+    "province": "Bari",
+    "region": "Puglia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BG": {
+    "province": "Bergamo",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BG_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BG_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BI": {
+    "province": "Biella",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BL": {
+    "province": "Belluno",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BL_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BL_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BN": {
+    "province": "Benevento",
+    "region": "Campania",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BO": {
+    "province": "Bologna",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BR": {
+    "province": "Brindisi",
+    "region": "Puglia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BS": {
+    "province": "Brescia",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BS_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BS_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BT": {
+    "province": "Barletta-Andria-Trani",
+    "region": "Puglia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BT_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BT_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "BZ": {
+    "province": "Bolzano",
+    "region": "Trentino-Alto Adige",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/BZ_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/BZ_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CA": {
+    "province": "Cagliari",
+    "region": "Sardegna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CB": {
+    "province": "Campobasso",
+    "region": "Molise",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CB_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CB_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CE": {
+    "province": "Caserta",
+    "region": "Campania",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CH": {
+    "province": "Chieti",
+    "region": "Abruzzo",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CH_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CH_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CL": {
+    "province": "Caltanissetta",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CL_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CL_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CN": {
+    "province": "Cuneo",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CO": {
+    "province": "Como",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CR": {
+    "province": "Cremona",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CS": {
+    "province": "Cosenza",
+    "region": "Calabria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CS_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CS_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CT": {
+    "province": "Catania",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CT_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CT_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "CZ": {
+    "province": "Catanzaro",
+    "region": "Calabria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/CZ_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/CZ_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "EN": {
+    "province": "Enna",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/EN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/EN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "FC": {
+    "province": "Forli'-Cesena",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/FC_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "FE": {
+    "province": "Ferrara",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/FE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "FG": {
+    "province": "Foggia",
+    "region": "Puglia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FG_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/FG_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "FI": {
+    "province": "Firenze",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/FI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "FM": {
+    "province": "Fermo",
+    "region": "Marche",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FM_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/FM_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "FR": {
+    "province": "Frosinone",
+    "region": "Lazio",
+    "date": "2025-09-02",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FR_dbsn_2025-09-02.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/FR_dbsn_2025-09-02.zip",
+    "tsv_date": "2025-09-02",
+    "status": "ok"
+  },
+  "GE": {
+    "province": "Genova",
+    "region": "Liguria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/GE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/GE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "GO": {
+    "province": "Gorizia",
+    "region": "Friuli Venezia Giulia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/GO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/GO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "GR": {
+    "province": "Grosseto",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/GR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/GR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "IM": {
+    "province": "Imperia",
+    "region": "Liguria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/IM_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/IM_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "IS": {
+    "province": "Isernia",
+    "region": "Molise",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/IS_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/IS_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "KR": {
+    "province": "Crotone",
+    "region": "Calabria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/KR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/KR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "LC": {
+    "province": "Lecco",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/LC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/LC_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "LE": {
+    "province": "Lecce",
+    "region": "Puglia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/LE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/LE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "LI": {
+    "province": "Livorno",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/LI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/LI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "LO": {
+    "province": "Lodi",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/LO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/LO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "LT": {
+    "province": "Latina",
+    "region": "Lazio",
+    "date": "2025-09-02",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/LT_dbsn_2025-09-02.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/LT_dbsn_2025-09-02.zip",
+    "tsv_date": "2025-09-02",
+    "status": "ok"
+  },
+  "LU": {
+    "province": "Lucca",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/LU_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/LU_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MB": {
+    "province": "Monza e della Brianza",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MB_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MB_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MC": {
+    "province": "Macerata",
+    "region": "Marche",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MC_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "ME": {
+    "province": "Messina",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/ME_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/ME_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MI": {
+    "province": "Milano",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MN": {
+    "province": "Mantova",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MO": {
+    "province": "Modena",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MS": {
+    "province": "Massa-Carrara",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MS_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MS_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "MT": {
+    "province": "Matera",
+    "region": "Basilicata",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/MT_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/MT_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "NA": {
+    "province": "Napoli",
+    "region": "Campania",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/NA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/NA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "NO": {
+    "province": "Novara",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/NO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/NO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "NU": {
+    "province": "Nuoro",
+    "region": "Sardegna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/NU_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/NU_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "OR": {
+    "province": "Oristano",
+    "region": "Sardegna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/OR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/OR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PA": {
+    "province": "Palermo",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PC": {
+    "province": "Piacenza",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PC_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PD": {
+    "province": "Padova",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PD_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PD_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PE": {
+    "province": "Pescara",
+    "region": "Abruzzo",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PG": {
+    "province": "Perugia",
+    "region": "Umbria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PG_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PG_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PI": {
+    "province": "Pisa",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PN": {
+    "province": "Pordenone",
+    "region": "Friuli Venezia Giulia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PO": {
+    "province": "Prato",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PR": {
+    "province": "Parma",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PT": {
+    "province": "Pistoia",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PT_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PT_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PU": {
+    "province": "Pesaro e Urbino",
+    "region": "Marche",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PU_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PU_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PV": {
+    "province": "Pavia",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PV_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PV_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "PZ": {
+    "province": "Potenza",
+    "region": "Basilicata",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/PZ_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/PZ_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "RA": {
+    "province": "Ravenna",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "RC": {
+    "province": "Reggio di Calabria",
+    "region": "Calabria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RC_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "RE": {
+    "province": "Reggio nell'Emilia",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "RG": {
+    "province": "Ragusa",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RG_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RG_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "RI": {
+    "province": "Rieti",
+    "region": "Lazio",
+    "date": "2025-09-02",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RI_dbsn_2025-09-02.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RI_dbsn_2025-09-02.zip",
+    "tsv_date": "2025-09-02",
+    "status": "ok"
+  },
+  "RM": {
+    "province": "Roma",
+    "region": "Lazio",
+    "date": "2025-09-02",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RM_dbsn_2025-09-02.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RM_dbsn_2025-09-02.zip",
+    "tsv_date": "2025-09-02",
+    "status": "ok"
+  },
+  "RN": {
+    "province": "Rimini",
+    "region": "Emilia-Romagna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "RO": {
+    "province": "Rovigo",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/RO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/RO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SA": {
+    "province": "Salerno",
+    "region": "Campania",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SI": {
+    "province": "Siena",
+    "region": "Toscana",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SM": {
+    "province": "San Marino",
+    "region": "San Marino",
+    "date": "2025-07-28",
+    "url": "https://www.igmi.org/scaricamento_dbsn_database/v202507_1/SMR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SMR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SO": {
+    "province": "Sondrio",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SP": {
+    "province": "La Spezia",
+    "region": "Liguria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SP_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SP_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SR": {
+    "province": "Siracusa",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SS": {
+    "province": "Sassari",
+    "region": "Sardegna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SS_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SS_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SU": {
+    "province": "Sud Sardegna",
+    "region": "Sardegna",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SU_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SU_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "SV": {
+    "province": "Savona",
+    "region": "Liguria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/SV_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/SV_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TA": {
+    "province": "Taranto",
+    "region": "Puglia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TE": {
+    "province": "Teramo",
+    "region": "Abruzzo",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TN": {
+    "province": "Trento",
+    "region": "Trentino-Alto Adige",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TN_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TN_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TO": {
+    "province": "Torino",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TO_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TO_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TP": {
+    "province": "Trapani",
+    "region": "Sicilia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TP_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TP_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TR": {
+    "province": "Terni",
+    "region": "Umbria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TS": {
+    "province": "Trieste",
+    "region": "Friuli Venezia Giulia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TS_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TS_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "TV": {
+    "province": "Treviso",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/TV_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/TV_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "UD": {
+    "province": "Udine",
+    "region": "Friuli Venezia Giulia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/UD_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/UD_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VA": {
+    "province": "Varese",
+    "region": "Lombardia",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VA_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VA_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VB": {
+    "province": "Verbano-Cusio-Ossola",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VB_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VB_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VC": {
+    "province": "Vercelli",
+    "region": "Piemonte",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VC_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VE": {
+    "province": "Venezia",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VE_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VE_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VI": {
+    "province": "Vicenza",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VI_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VI_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VR": {
+    "province": "Verona",
+    "region": "Veneto",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VR_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VR_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  },
+  "VT": {
+    "province": "Viterbo",
+    "region": "Lazio",
+    "date": "2025-09-02",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VT_dbsn_2025-09-02.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VT_dbsn_2025-09-02.zip",
+    "tsv_date": "2025-09-02",
+    "status": "ok"
+  },
+  "VV": {
+    "province": "Vibo Valentia",
+    "region": "Calabria",
+    "date": "2025-07-28",
+    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/VV_dbsn_2025-07-28.zip",
+    "fallback_url": "https://www.dsantini.it/dbsn/zip/VV_dbsn_2025-07-28.zip",
+    "tsv_date": "2025-07-28",
+    "status": "ok"
+  }
+}

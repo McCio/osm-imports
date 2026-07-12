@@ -1,0 +1,35 @@
+[project]
+name = "dbsn"
+version = "0.1.0"
+description = "DBSN buildings import pipeline for OSM"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.28",
+    "beautifulsoup4>=4.15",
+    "fiona>=1.10",      # ships bundled GDAL+PROJ wheels; no system GDAL needed
+]
+
+[project.scripts]
+dbsn-discover    = "dbsn.discover:main"
+dbsn-download    = "dbsn.download:main"
+dbsn-extract     = "dbsn.extract:main"
+dbsn-convert     = "dbsn.convert:main"
+dbsn-validate    = "dbsn.validate:main"
+dbsn-all         = "dbsn.pipeline:main"
+dbsn-list-codes  = "dbsn.list_codes:main"
+
+[dependency-groups]
+dev = ["ruff>=0.4"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+include = ["dbsn/**", "utils/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF", "SIM", "PTH", "PLC0415"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
