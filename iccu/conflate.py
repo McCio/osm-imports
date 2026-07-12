@@ -1,16 +1,16 @@
 """Run osm-conflate for an ICCU region, producing OSM and GeoJSON change files."""
 
 import logging
-import os
 import re
 import shutil
 import sys
 import tempfile
+from pathlib import Path
 
 import polars as pl
-from conflate.conflate import run as _conflate_run
+from conflate.conflate import run as conflate_run
+from tenacity import Retrying, before_sleep_log, retry_if_exception, stop_after_delay, wait_exponential
 
-from iccu.export import CSV_SCHEMA_OVERRIDES
 from iccu.common import (
     ALL_REGION,
     CLEAN_CSV,
@@ -25,17 +25,26 @@ from iccu.common import (
     parse_regions,
     safe_label,
 )
+from iccu.export import CSV_SCHEMA_OVERRIDES
 from iccu.region import resolve
 
 
-def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, overpass_url: str | None = None, contact: str | None = None) -> None:
+def run(
+    region: str = ALL_REGION,
+    overwrite: bool = False,
+    osc: bool = False,
+    overpass_url: str | None = None,
+    contact: str | None = None,
+) -> None:
     print(f"=== Step 4: Conflate ({safe_label(region)}) ===")
 
     if not CLEAN_CSV.exists():
         print(f"clean.csv not found at {CLEAN_CSV} — run iccu-clean first.", file=sys.stderr)
         sys.exit(1)
 
-    df = pl.read_csv(CLEAN_CSV, schema_overrides=CSV_SCHEMA_OVERRIDES).filter(~(pl.col("latitudine").is_null() | pl.col("longitudine").is_null()))
+    df = pl.read_csv(CLEAN_CSV, schema_overrides=CSV_SCHEMA_OVERRIDES).filter(
+        ~(pl.col("latitudine").is_null() | pl.col("longitudine").is_null())
+    )
     rf = resolve(region, df)
 
     out_dir = osm_output_dir(rf.label)
@@ -71,8 +80,17 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, ov
     else:
         area_filter = None
 
+    retrier = Retrying(
+        retry=retry_if_exception(lambda e: isinstance(e, OSError) and e.errno is None),
+        wait=wait_exponential(multiplier=30, min=30, max=120),
+        stop=stop_after_delay(600),
+        before_sleep=before_sleep_log(logging.getLogger(__name__), logging.WARNING),
+        reraise=True,
+    )
+
     try:
-        _conflate_run(
+        retrier(
+            conflate_run,
             profile=PROFILE_PY,
             source=source_csv,
             output=out_osm,
@@ -86,7 +104,7 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, ov
         )
     finally:
         if rf.expr is not None:
-            os.unlink(source_csv)
+            Path(source_csv).unlink()
 
 
 def _extra_args(p) -> None:
@@ -98,7 +116,7 @@ def _extra_args(p) -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout, format='%(asctime)s %(message)s', datefmt='%H:%M:%S')
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     args = parse_args("Step 4: conflate ICCU data with OSM", region=True, setup=_extra_args)
     regions = parse_regions(args.region)
     if not regions:

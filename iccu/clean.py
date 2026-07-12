@@ -15,10 +15,10 @@ def _split_phone_variants(val: str) -> list[str]:
 
     '+39 0812536361;6140;6073'  → ['+39 0812536361', '+39 0812536140', '+39 0812536073']
     '+39 0817743166–0812581232' → ['+39 0817743166', '+39 0812581232']  (long: separate number)
-    """
+    """  # noqa: RUF002
     if not val:
         return []
-    val = val.replace(";", "/").replace("–", "/").replace("\xa0", "/")
+    val = val.replace(";", "/").replace("–", "/").replace("\xa0", "/")  # noqa: RUF001
     val = re.sub(r"(\d{7,})-(\d)", r"\1/\2", val)
     parts = val.split("/")
     if len(parts) == 1:
@@ -85,18 +85,12 @@ def run(overwrite: bool = False) -> None:
     )
     territorio = _strip_strings(territorio)
     if "cap" in territorio.columns:
-        _pad_cap = territorio.filter(
-            pl.col("cap").is_not_null()
-            & pl.col("cap").str.contains(r"^\d{1,4}$")
-        )
+        _pad_cap = territorio.filter(pl.col("cap").is_not_null() & pl.col("cap").str.contains(r"^\d{1,4}$"))
         if len(_pad_cap):
             print(f"  [warn] {len(_pad_cap)} cap values have <5 digits (zero-padded):", file=sys.stderr)
             for _r in _pad_cap.select("codice-isil", "cap").to_dicts():
                 print(f"    {_r['codice-isil']}  cap={_r['cap']!r}", file=sys.stderr)
-        _null_cap = territorio.filter(
-            pl.col("cap").is_not_null()
-            & ~pl.col("cap").str.contains(r"^\d{1,5}$")
-        )
+        _null_cap = territorio.filter(pl.col("cap").is_not_null() & ~pl.col("cap").str.contains(r"^\d{1,5}$"))
         if len(_null_cap):
             print(f"  [warn] {len(_null_cap)} cap values are non-numeric (nulled):", file=sys.stderr)
             for _r in _null_cap.select("codice-isil", "cap").to_dicts():
@@ -476,7 +470,10 @@ def run(overwrite: bool = False) -> None:
 
     no_coords = result.filter(pl.col("latitudine").is_null() | pl.col("longitudine").is_null())
     if len(no_coords):
-        print(f"  [warn] {len(no_coords)} rows have address but no coordinates (will be skipped in export/conflate):", file=sys.stderr)
+        print(
+            f"  [warn] {len(no_coords)} rows have address but no coordinates (will be skipped in export/conflate):",
+            file=sys.stderr,
+        )
         for row in no_coords.select("codice-isil", "denominazione", "indirizzo").to_dicts():
             print(f"    {row['codice-isil']}  {row['denominazione']!r}  {row['indirizzo']!r}", file=sys.stderr)
 
