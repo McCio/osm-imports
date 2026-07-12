@@ -5,6 +5,7 @@ import sys
 import polars as pl
 
 from iccu.common import CLEAN_CSV, parse_args
+from iccu.export import CSV_SCHEMA_OVERRIDES
 
 # Italy + islands bounding box (generous margins)
 _LAT_MIN, _LAT_MAX = 35.4, 47.2
@@ -23,7 +24,7 @@ def run() -> int:
         print(f"clean.csv not found at {CLEAN_CSV} — run iccu-clean first.", file=sys.stderr)
         sys.exit(1)
 
-    df = pl.read_csv(CLEAN_CSV, schema_overrides={"cap": pl.Utf8})
+    df = pl.read_csv(CLEAN_CSV, schema_overrides=CSV_SCHEMA_OVERRIDES)
     errors = 0
     warnings = 0
 
@@ -77,26 +78,6 @@ def run() -> int:
         | (pl.col("longitudine") > _LON_MAX)
     ).select("codice-isil", "latitudine", "longitudine").to_dicts():
         _warn(f"coordinates outside Italy: {row['codice-isil']} lat={row['latitudine']} lon={row['longitudine']}")
-
-    # 7. cap must be null or exactly 5 digits (clean.py should have nulled bad values already)
-    if "cap" in df.columns:
-        for row in df.filter(
-            pl.col("cap").is_not_null() & ~pl.col("cap").str.contains(r"^\d{5}$")
-        ).select("codice-isil", "cap").to_dicts():
-            _err(f"non-5-digit cap (run iccu-clean --overwrite): {row['codice-isil']} cap={row['cap']!r}")
-
-    # 8. access / wheelchair enum values
-    if "access" in df.columns:
-        for row in df.filter(
-            pl.col("access").is_not_null() & ~pl.col("access").is_in(["yes", "permit"])
-        ).select("codice-isil", "access").to_dicts():
-            _err(f"invalid access value: {row['codice-isil']} access={row['access']!r}")
-
-    if "wheelchair" in df.columns:
-        for row in df.filter(
-            pl.col("wheelchair").is_not_null() & ~pl.col("wheelchair").is_in(["yes", "limited", "no"])
-        ).select("codice-isil", "wheelchair").to_dicts():
-            _err(f"invalid wheelchair value: {row['codice-isil']} wheelchair={row['wheelchair']!r}")
 
     total = len(df)
     summary = f"{total} libraries: {errors} error(s), {warnings} warning(s)."

@@ -60,7 +60,8 @@ jobs:
           if ! gh release view "$ICCU_TAG" &>/dev/null; then
             gh release create "$ICCU_TAG" \
               --title "ICCU Libraries $ICCU_DATE" \
-              --notes "ICCU library data (OSM XML), version $ICCU_DATE"
+              --notes "ICCU library data (OSM XML), version $ICCU_DATE" \
+              --latest=false
           fi
 
       - name: Restore data from release

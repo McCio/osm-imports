@@ -62,7 +62,8 @@ jobs:
           if ! gh release view "$DBSN_TAG" &>/dev/null; then
             gh release create "$DBSN_TAG" \
               --title "DBSN Buildings $DBSN_DATE" \
-              --notes "DBSN building footprints (OSM XML), version $DBSN_DATE"
+              --notes "DBSN building footprints (OSM XML), version $DBSN_DATE" \
+              --latest=false
           fi
 
       - name: Restore data from release

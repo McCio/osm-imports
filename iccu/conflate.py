@@ -9,6 +9,7 @@ import tempfile
 import polars as pl
 from conflate.conflate import run as _conflate_run
 
+from iccu.export import CSV_SCHEMA_OVERRIDES
 from iccu.common import (
     ALL_REGION,
     CLEAN_CSV,
@@ -21,18 +22,20 @@ from iccu.common import (
     overpass_cache,
     parse_args,
     parse_regions,
+    safe_label,
 )
 from iccu.region import resolve
 
 
 def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, overpass_url: str | None = None, contact: str | None = None) -> None:
+    print(f"=== Step 4: Conflate ({safe_label(region)}) ===")
+
     if not CLEAN_CSV.exists():
         print(f"clean.csv not found at {CLEAN_CSV} — run iccu-clean first.", file=sys.stderr)
         sys.exit(1)
 
-    df = pl.read_csv(CLEAN_CSV).filter(~(pl.col("latitudine").is_null() | pl.col("longitudine").is_null()))
+    df = pl.read_csv(CLEAN_CSV, schema_overrides=CSV_SCHEMA_OVERRIDES).filter(~(pl.col("latitudine").is_null() | pl.col("longitudine").is_null()))
     rf = resolve(region, df)
-    print(f"=== Step 4: Conflate ({rf.label}) ===")
 
     out_dir = osm_output_dir(rf.label)
     out_osm = changes_osc(rf.label) if osc else changes_osm(rf.label)

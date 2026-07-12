@@ -448,6 +448,8 @@ def run(overwrite: bool = False) -> None:
         .str.replace(km, "km ${1}")
         .str.replace(snc, "snc")
         .str.replace("[\\.,]", ",")
+        .str.replace_all(r"(\d+)/\s*([a-zA-Z])\b", "${1}${2}")
+        .str.to_lowercase()
         .alias("address_housenumber"),
         pl.col("indirizzo").str.replace(f"\\s*,?\\s*{hn}?\\s*({additional_info})?$", "").alias("address_street"),
     )
