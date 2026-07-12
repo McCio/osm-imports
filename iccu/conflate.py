@@ -1,9 +1,11 @@
 """Run osm-conflate for an ICCU region, producing OSM and GeoJSON change files."""
 
-import subprocess
+import os
 import sys
+import tempfile
 
 import polars as pl
+from conflate.conflate import run as _conflate_run
 
 from iccu.common import (
     ALL_REGION,
@@ -43,33 +45,31 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, ov
     if overwrite:
         overpass_cache(rf.label).unlink(missing_ok=True)
 
-    cmd = [
-        "uv",
-        "run",
-        "conflate",
-        "--source",
-        str(CLEAN_CSV),
-        "--output",
-        str(out_osm),
-        "--changes",
-        str(out_geojson),
-        "--regions",
-        rf.conflate_regions,
-        "--osm",
-        str(overpass_cache(rf.label)),
-        str(PROFILE_PY),
-    ]
-    if osc:
-        cmd.insert(3, "--osc")
-    if overpass_url:
-        cmd += ["--overpass-url", overpass_url]
-    if contact:
-        cmd += ["--contact", contact]
+    # Write a filtered CSV so conflate's bbox covers only this region/province,
+    # not all 13k Italy rows (which causes Overpass timeouts).
+    if rf.expr is not None:
+        filtered_df = df.filter(rf.expr)
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="wb") as tmp:
+            source_csv = tmp.name
+        filtered_df.write_csv(source_csv)
+    else:
+        source_csv = str(CLEAN_CSV)
 
-    print("Running:", " ".join(cmd))
-    result = subprocess.run(cmd, check=False)
-    if result.returncode != 0:
-        sys.exit(result.returncode)
+    try:
+        _conflate_run(
+            profile=PROFILE_PY,
+            source=source_csv,
+            output=out_osm,
+            changes=out_geojson,
+            regions=rf.conflate_regions,
+            osm=overpass_cache(rf.label),
+            overpass_url=overpass_url,
+            contact=contact,
+            osc=osc,
+        )
+    finally:
+        if rf.expr is not None:
+            os.unlink(source_csv)
 
 
 def _extra_args(p) -> None:
