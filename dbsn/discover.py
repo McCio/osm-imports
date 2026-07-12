@@ -124,12 +124,33 @@ def _merge(tsv: dict[str, dict], igm: dict[str, dict]) -> dict[str, dict]:
     return sources
 
 
+def _fetch_sizes(sources: dict[str, dict], client: httpx.Client) -> None:
+    for entry in sources.values():
+        for url in [entry["url"], entry["fallback_url"]]:
+            if not url:
+                continue
+            try:
+                r = client.head(url, follow_redirects=True, timeout=10)
+                r.raise_for_status()
+                size = int(r.headers.get("content-length", 0))
+                if size > 0:
+                    entry["zip_size"] = size
+                    break
+            except Exception:
+                continue
+        else:
+            entry["zip_size"] = None
+    found = sum(1 for v in sources.values() if v["zip_size"])
+    print(f"  [size] {found}/{len(sources)} provinces with known ZIP size")
+
+
 def run(overwrite: bool) -> dict:
     print("=== Step 0: Discover ===")
     tsv_data = _fetch_tsv(overwrite)
     with http_client() as client:
         igm_data = _scrape_igm(client)
-    sources = _merge(tsv_data, igm_data)
+        sources = _merge(tsv_data, igm_data)
+        _fetch_sizes(sources, client)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     SOURCES_JSON.write_text(json.dumps(sources, indent=2, ensure_ascii=False), encoding="utf-8")
     newer = sum(1 for v in sources.values() if v["status"] == "newer_available")

@@ -51,6 +51,7 @@ class Province(TypedDict):
     date: str
     tsv_date: str
     status: str
+    zip_size: int | None
 
 
 def read_sources() -> list[Province]:
@@ -67,6 +68,7 @@ def read_sources() -> list[Province]:
                 fallback_url=v.get("fallback_url", v["url"]),
                 tsv_date=v.get("tsv_date", v["date"]),
                 status=v.get("status", "ok"),
+                zip_size=v.get("zip_size"),
             )
             for code, v in data.items()
         ]

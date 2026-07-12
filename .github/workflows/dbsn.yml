@@ -1,4 +1,5 @@
 name: DBSN Pipeline
+run-name: "DBSN — ${{ inputs.province }}"
 
 on:
   workflow_dispatch:
