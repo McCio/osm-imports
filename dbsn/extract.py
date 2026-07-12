@@ -38,11 +38,6 @@ def _reproject(geom: dict, t: Transformer) -> dict:
 
 
 def _extract_province(p: Province, overwrite: bool) -> bool | None:
-    zip_path = ZIPS_DIR / p["zip_name"]
-    if not zip_path.exists():
-        print(f"  [skip   ] {p['code']} {p['province']}: ZIP not found, run download first")
-        return None
-
     out_fgb = BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb"
     if not overwrite:
         osm_path = OSM_DIR / f"{p['code']}_{p['date']}.osm"
@@ -54,6 +49,11 @@ def _extract_province(p: Province, overwrite: bool) -> bool | None:
             size = out_fgb.stat().st_size // 1024
             print(f"  [skip   ] {p['code']} {p['province']}: {rel(out_fgb)} ({size}KB)")
             return True
+
+    zip_path = ZIPS_DIR / p["zip_name"]
+    if not zip_path.exists():
+        print(f"  [skip   ] {p['code']} {p['province']}: ZIP not found, run download first")
+        return None
 
     # Unzip — always clear to avoid reusing a partial dir from a previous crash
     UNZIPPED_DIR.mkdir(parents=True, exist_ok=True)

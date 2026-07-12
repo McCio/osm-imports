@@ -313,11 +313,11 @@
     "province": "Forli'-Cesena",
     "region": "Emilia-Romagna",
     "date": "2025-07-28",
-    "url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FC_dbsn_2025-07-28.zip",
-    "fallback_url": "https://www.dsantini.it/dbsn/zip/FC_dbsn_2025-07-28.zip",
+    "url": "https://www.dsantini.it/dbsn/zip/FC_dbsn_2025-07-28.zip",
+    "fallback_url": "https://igmi.esercito.difesa.it/porta-magna/data/dbsn/FC_dbsn_2025-07-28.zip",
     "tsv_date": "2025-07-28",
     "status": "ok",
-    "zip_size": 317438
+    "zip_size": 125410804
   },
   "FE": {
     "province": "Ferrara",

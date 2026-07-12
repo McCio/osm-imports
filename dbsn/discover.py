@@ -15,6 +15,7 @@ from dbsn.common import (
     IGM_DOWNLOAD_URL,
     SOURCES_JSON,
     TSV_CACHE,
+    fmt_size,
     http_client,
     rel,
 )
@@ -124,24 +125,40 @@ def _merge(tsv: dict[str, dict], igm: dict[str, dict]) -> dict[str, dict]:
     return sources
 
 
+def _head_size(url: str, client: httpx.Client) -> int | None:
+    try:
+        r = client.head(url, follow_redirects=True, timeout=10)
+        r.raise_for_status()
+        size = int(r.headers.get("content-length", 0))
+        return size if size > 0 else None
+    except Exception:
+        return None
+
+
 def _fetch_sizes(sources: dict[str, dict], client: httpx.Client) -> None:
-    for entry in sources.values():
-        for url in [entry["url"], entry["fallback_url"]]:
-            if not url:
-                continue
-            try:
-                r = client.head(url, follow_redirects=True, timeout=10)
-                r.raise_for_status()
-                size = int(r.headers.get("content-length", 0))
-                if size > 0:
-                    entry["zip_size"] = size
-                    break
-            except Exception:
-                continue
-        else:
-            entry["zip_size"] = None
+    mismatches: list[str] = []
+    for code, entry in sources.items():
+        primary = entry["url"]
+        fallback = entry.get("fallback_url", "")
+        unique_urls = list(dict.fromkeys(u for u in [primary, fallback] if u))
+
+        sizes = {url: _head_size(url, client) for url in unique_urls}
+        entry["zip_size"] = sizes.get(primary) or next((s for s in sizes.values() if s), None)
+
+        if fallback and fallback != primary:
+            ps, fs = sizes.get(primary), sizes.get(fallback)
+            if ps and fs and ps != fs:
+                ratio = max(ps, fs) / min(ps, fs)
+                if ratio >= 2:
+                    mismatches.append(
+                        f"  [warn ] {code}: primary {fmt_size(ps)} vs fallback {fmt_size(fs)}"
+                        + (" — consider swapping" if fs > ps else "")
+                    )
+
     found = sum(1 for v in sources.values() if v["zip_size"])
     print(f"  [size] {found}/{len(sources)} provinces with known ZIP size")
+    for msg in mismatches:
+        print(msg)
 
 
 def run(overwrite: bool) -> dict:

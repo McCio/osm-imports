@@ -1,14 +1,6 @@
 """Print province codes for a selector (used by the GH Actions workflow)."""
 
-from dbsn.common import parse_args
-
-
-def _fmt_size(size: int | None) -> str:
-    if size is None:
-        return "unknown"
-    if size >= 1_000_000:
-        return f"{size / 1_000_000:.1f} MB"
-    return f"{size // 1024} KB"
+from dbsn.common import fmt_size, parse_args
 
 
 def main() -> None:
@@ -27,7 +19,7 @@ def main() -> None:
                 parts.append(f"{p['province']:<30}")
             if v >= 3:
                 parts.append(f"{p['region']:<20}")
-            parts += [p["date"], _fmt_size(p["zip_size"])]
+            parts += [p["date"], fmt_size(p["zip_size"])]
             print("  ".join(parts))
 
 
