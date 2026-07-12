@@ -64,19 +64,27 @@ def run() -> int:
     # 5. Likely swapped lat/lon — Italian lat ∈ [35.4, 47.2] never overlaps lon ∈ [6.6, 18.6];
     #    a lat value in the lon range means the pair is definitely transposed → wrong conflation.
     has_coords = df.filter(pl.col("latitudine").is_not_null() & pl.col("longitudine").is_not_null())
-    for row in has_coords.filter(
-        pl.col("latitudine").is_between(_LON_MIN, _LON_MAX) & pl.col("longitudine").is_between(_LAT_MIN, _LAT_MAX)
-    ).select("codice-isil", "latitudine", "longitudine").to_dicts():
+    for row in (
+        has_coords.filter(
+            pl.col("latitudine").is_between(_LON_MIN, _LON_MAX) & pl.col("longitudine").is_between(_LAT_MIN, _LAT_MAX)
+        )
+        .select("codice-isil", "latitudine", "longitudine")
+        .to_dicts()
+    ):
         _err(f"swapped lat/lon: {row['codice-isil']} lat={row['latitudine']} lon={row['longitudine']}")
 
     # 6. Coordinates outside Italy bounding box — warn only; source-data error we cannot fix,
     #    conflation will simply not match the library to any Italian OSM object.
-    for row in has_coords.filter(
-        (pl.col("latitudine") < _LAT_MIN)
-        | (pl.col("latitudine") > _LAT_MAX)
-        | (pl.col("longitudine") < _LON_MIN)
-        | (pl.col("longitudine") > _LON_MAX)
-    ).select("codice-isil", "latitudine", "longitudine").to_dicts():
+    for row in (
+        has_coords.filter(
+            (pl.col("latitudine") < _LAT_MIN)
+            | (pl.col("latitudine") > _LAT_MAX)
+            | (pl.col("longitudine") < _LON_MIN)
+            | (pl.col("longitudine") > _LON_MAX)
+        )
+        .select("codice-isil", "latitudine", "longitudine")
+        .to_dicts()
+    ):
         _warn(f"coordinates outside Italy: {row['codice-isil']} lat={row['latitudine']} lon={row['longitudine']}")
 
     total = len(df)

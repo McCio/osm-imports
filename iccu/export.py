@@ -72,7 +72,9 @@ def _load(region: str) -> tuple[pl.DataFrame, RegionFilter]:
     if not CLEAN_CSV.exists():
         print(f"clean.csv not found at {CLEAN_CSV} — run iccu-clean first.", file=sys.stderr)
         sys.exit(1)
-    df = pl.read_csv(CLEAN_CSV, schema_overrides=CSV_SCHEMA_OVERRIDES).filter(~(pl.col("latitudine").is_null() | pl.col("longitudine").is_null()))
+    df = pl.read_csv(CLEAN_CSV, schema_overrides=CSV_SCHEMA_OVERRIDES).filter(
+        ~(pl.col("latitudine").is_null() | pl.col("longitudine").is_null())
+    )
     rf = resolve(region, df)
     if rf.expr is not None:
         df = df.filter(rf.expr)

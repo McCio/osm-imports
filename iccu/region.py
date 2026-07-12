@@ -78,7 +78,9 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
     matched = df.filter(expr_region)
     if not matched.is_empty():
         iccu = _region_of(matched)
-        return RegionFilter(label=label, expr=expr_region, conflate_regions=iccu, admin_level=4, osm_name=_OSM_NAME.get(iccu))
+        return RegionFilter(
+            label=label, expr=expr_region, conflate_regions=iccu, admin_level=4, osm_name=_OSM_NAME.get(iccu)
+        )
 
     # Italian province name
     expr_province = pl.col("provincia").str.to_lowercase() == lower
@@ -96,7 +98,9 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
 def _province_filter(label: str, expr: pl.Expr, matched: pl.DataFrame) -> RegionFilter:
     iccu = _province_of(matched)
     admin_level = _OSM_ADMIN_LEVEL.get(iccu, 6)
-    return RegionFilter(label=label, expr=expr, conflate_regions=iccu, admin_level=admin_level, osm_name=_OSM_NAME.get(iccu))
+    return RegionFilter(
+        label=label, expr=expr, conflate_regions=iccu, admin_level=admin_level, osm_name=_OSM_NAME.get(iccu)
+    )
 
 
 def _region_of(df: pl.DataFrame) -> str:
