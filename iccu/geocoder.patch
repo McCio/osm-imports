@@ -1,0 +1,8 @@
+--- venv/lib/python3.12/site-packages/conflate/geocoder.py	2024-11-14 14:24:19.551418891 +0100
++++ venv/lib/python3.12/site-packages/conflate/geocoder.py	2024-11-14 16:50:49.324930955 +0100
+@@ -117,4 +117,4 @@
+                 else:
+                     region = reg.data.country
+ 
+-        return region, not self.filter or (self.negate != (region not in self.filter))
++        return region, not self.filter or (self.f_negate != (region not in self.filter))
