@@ -1,5 +1,6 @@
 """OSM and GeoJSON writer utilities."""
 
+import re
 from collections.abc import Callable, Iterator
 from itertools import count
 from pathlib import Path
@@ -7,11 +8,14 @@ from pathlib import Path
 import fiona
 import osmium
 
+# XML 1.0 forbids control chars except TAB/LF/CR
+_INVALID_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f￾￿]")
+
 
 def _safe_tags(raw: dict | None) -> dict:
     if not raw:
         return {}
-    return {k: str(v) for k, v in raw.items() if v is not None}
+    return {k: _INVALID_XML.sub("", str(v)) for k, v in raw.items() if v is not None}
 
 
 def _translated(src, translate_fn: Callable):

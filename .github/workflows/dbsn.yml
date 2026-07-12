@@ -85,10 +85,19 @@ jobs:
       - name: Run convert
         run: uv run dbsn-convert --province "$PROVINCE" --compress
 
+      - name: Check for OSM output
+        id: osm_check
+        if: always()
+        run: |
+          count=$(find data/dbsn/osm -name '*.osm*' 2>/dev/null | wc -l | tr -d ' ')
+          echo "found=$count" >> "$GITHUB_OUTPUT"
+
       - name: Install osmium-tool
+        if: always() && steps.osm_check.outputs.found != '0'
         run: sudo apt-get install -y osmium-tool
 
       - name: Run validate
+        if: always() && steps.osm_check.outputs.found != '0'
         run: uv run dbsn-validate --province "$PROVINCE" --delete-invalid
 
       - name: Save frontier to release

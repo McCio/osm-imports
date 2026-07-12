@@ -39,7 +39,12 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
             if fmt == "geojson":
                 count_written = write_geojson(src, out_path, translate, _GEOJSON_SCHEMA)
             else:
-                count_written = write_osm(src, out_path, translate, src.bounds)
+                try:
+                    bounds = src.bounds
+                except Exception as exc:
+                    print(f"  [warn   ] {p['code']} {p['province']}: bounds unavailable ({exc}), omitting bbox")
+                    bounds = None
+                count_written = write_osm(src, out_path, translate, bounds)
         size = out_path.stat().st_size // 1024
         print(f"  [done   ] {p['code']} {p['province']}: {rel(out_path)} ({count_written} features, {size}KB)")
         return True
