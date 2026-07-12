@@ -324,8 +324,8 @@ wheels = [
 
 [[package]]
 name = "osm-conflate"
-version = "1.6.1"
-source = { git = "https://github.com/McCio/osm_conflate?rev=v1.6.1#602a92cd9a5b542524f80938731d624a65ffc311" }
+version = "1.6.2"
+source = { git = "https://github.com/McCio/osm_conflate?rev=v1.6.2#43c0b4415d916732b7483faa637b029a004b0f2b" }
 dependencies = [
     { name = "kdtree" },
     { name = "requests" },
@@ -358,7 +358,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.15" },
     { name = "fiona", specifier = ">=1.10" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "osm-conflate", git = "https://github.com/McCio/osm_conflate?rev=v1.6.1" },
+    { name = "osm-conflate", git = "https://github.com/McCio/osm_conflate?rev=v1.6.2" },
     { name = "osmium", specifier = ">=4.3.1" },
     { name = "pandas", extras = ["xml"], specifier = ">=3.0,<4" },
     { name = "phonenumberslite", specifier = ">=9.0,<10" },

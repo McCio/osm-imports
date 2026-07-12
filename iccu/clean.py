@@ -80,10 +80,35 @@ def run(overwrite: bool = False) -> None:
         .drop("indirizzo")
     )
     biblioteche = _strip_strings(biblioteche)
-    territorio = pl.read_csv(SOURCE_DIR / "territorio.csv", separator=";").drop(
+    territorio = pl.read_csv(SOURCE_DIR / "territorio.csv", separator=";", schema_overrides={"cap": pl.Utf8}).drop(
         "denominazione", "codice-sbn", "codice istat comune", "codice istat provincia"
     )
     territorio = _strip_strings(territorio)
+    if "cap" in territorio.columns:
+        _pad_cap = territorio.filter(
+            pl.col("cap").is_not_null()
+            & pl.col("cap").str.contains(r"^\d{1,4}$")
+        )
+        if len(_pad_cap):
+            print(f"  [warn] {len(_pad_cap)} cap values have <5 digits (zero-padded):", file=sys.stderr)
+            for _r in _pad_cap.select("codice-isil", "cap").to_dicts():
+                print(f"    {_r['codice-isil']}  cap={_r['cap']!r}", file=sys.stderr)
+        _null_cap = territorio.filter(
+            pl.col("cap").is_not_null()
+            & ~pl.col("cap").str.contains(r"^\d{1,5}$")
+        )
+        if len(_null_cap):
+            print(f"  [warn] {len(_null_cap)} cap values are non-numeric (nulled):", file=sys.stderr)
+            for _r in _null_cap.select("codice-isil", "cap").to_dicts():
+                print(f"    {_r['codice-isil']}  cap={_r['cap']!r}", file=sys.stderr)
+        territorio = territorio.with_columns(
+            pl.when(pl.col("cap").str.contains(r"^\d{5}$"))
+            .then(pl.col("cap"))
+            .when(pl.col("cap").str.contains(r"^\d{1,4}$"))
+            .then(pl.col("cap").str.zfill(5))
+            .otherwise(None)
+            .alias("cap")
+        )
     tipologie = (
         pl.read_csv(SOURCE_DIR / "tipologie.csv", separator=";")
         .drop("denominazione biblioteca")

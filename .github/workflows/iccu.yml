@@ -69,18 +69,19 @@ jobs:
         run: |
           mkdir -p data/iccu
           gh release download "$ICCU_TAG" --dir data/iccu --pattern "clean.csv" || true
-          IFS=',' read -ra REGIONS <<< "$REGION"
-          for region in "${REGIONS[@]}"; do
-            region=$(echo "$region" | xargs | tr '[:upper:]' '[:lower:]')
-            [[ -z "$region" ]] && continue
-            mkdir -p "data/iccu/osm/${region}"
-            gh release download "$ICCU_TAG" --dir /tmp/iccu-restore --pattern "${region}_*" 2>/dev/null || true
-            for f in /tmp/iccu-restore/${region}_*; do
-              [[ -f "$f" ]] || continue
-              basename="${f##*/}"
-              mv "$f" "data/iccu/osm/${region}/${basename#${region}_}"
-            done
-          done
+          # If clean.csv is absent (first ever run) there is nothing per-region to restore either.
+          if [[ -f data/iccu/clean.csv ]]; then
+            while IFS= read -r label; do
+              [[ -z "$label" ]] && continue
+              mkdir -p "data/iccu/osm/${label}"
+              gh release download "$ICCU_TAG" --dir /tmp/iccu-restore --pattern "${label}_*" 2>/dev/null || true
+              for f in "/tmp/iccu-restore/${label}_"*; do
+                [[ -f "$f" ]] || continue
+                fname="${f##*/}"
+                mv "$f" "data/iccu/osm/${label}/${fname#${label}_}"
+              done
+            done < <(uv run iccu-list-labels --region "$REGION")
+          fi
 
       - name: Restore Overpass cache
         uses: actions/cache@v6.1.0
@@ -93,6 +94,9 @@ jobs:
           args=()
           [[ "$OVERWRITE" == 'true' ]] && args+=(--overwrite)
           uv run iccu-clean "${args[@]}"
+
+      - name: Validate clean data
+        run: uv run iccu-validate
 
       - name: Run export
         run: |
@@ -117,19 +121,17 @@ jobs:
           [[ -f data/iccu/clean.csv ]] && gh release upload "$ICCU_TAG" data/iccu/clean.csv --clobber || true
 
           assets=$(gh release view "$ICCU_TAG" --json assets --jq '[.assets[].name]')
-          IFS=',' read -ra REGIONS <<< "$REGION"
-          for region in "${REGIONS[@]}"; do
-            region=$(echo "$region" | xargs | tr '[:upper:]' '[:lower:]')
-            [[ -z "$region" ]] && continue
+          while IFS= read -r label; do
+            [[ -z "$label" ]] && continue
 
-            dir="data/iccu/osm/${region}"
+            dir="data/iccu/osm/${label}"
             [[ -d "$dir" ]] || continue
 
             shopt -s nullglob
             uploads=()
             for src in "$dir/dataset.osm.bz2" "$dir/changes.osm" "$dir/changes.osc" "$dir/changes.geojson"; do
-              [[ -f "$src" ]] || continue
-              tmp="/tmp/${region}_$(basename "$src")"
+              [[ -f "$src" && -s "$src" ]] || continue
+              tmp="/tmp/${label}_$(basename "$src")"
               cp "$src" "$tmp"
               uploads+=("$tmp")
             done
@@ -140,11 +142,11 @@ jobs:
               if [[ -f "$dir/changes.osc" ]]; then
                 while IFS= read -r old; do
                   [[ -n "$old" ]] && gh release delete-asset "$ICCU_TAG" "$old" --yes || true
-                done < <(echo "$assets" | jq -r ".[] | select(test(\"^${region}_changes\\.osm$\"))")
+                done < <(echo "$assets" | jq -r ".[] | select(test(\"^${label}_changes[.]osm$\"))")
               elif [[ -f "$dir/changes.osm" ]]; then
                 while IFS= read -r old; do
                   [[ -n "$old" ]] && gh release delete-asset "$ICCU_TAG" "$old" --yes || true
-                done < <(echo "$assets" | jq -r ".[] | select(test(\"^${region}_changes\\.osc$\"))")
+                done < <(echo "$assets" | jq -r ".[] | select(test(\"^${label}_changes[.]osc$\"))")
               fi
             fi
-          done
+          done < <(uv run iccu-list-labels --region "$REGION")

@@ -8,7 +8,7 @@ from typing import NoReturn
 
 import polars as pl
 
-from iccu.common import ALL_REGION
+from iccu.common import ALL_REGION, safe_label
 
 
 @dataclass(frozen=True)
@@ -61,7 +61,8 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
     if term.lower() == ALL_REGION:
         return RegionFilter(label=ALL_REGION, expr=None, conflate_regions="italy", admin_level=None)
 
-    label = term.lower()
+    lower = term.lower()
+    label = safe_label(term)
 
     # 2-char province code → match first two chars of ISIL after "IT-"
     if len(term) == 2 and term.isalpha():
@@ -73,14 +74,14 @@ def resolve(term: str, df: pl.DataFrame) -> RegionFilter:
         return _province_filter(label, expr, matched)
 
     # Italian region name
-    expr_region = pl.col("regione").str.to_lowercase() == label
+    expr_region = pl.col("regione").str.to_lowercase() == lower
     matched = df.filter(expr_region)
     if not matched.is_empty():
         iccu = _region_of(matched)
         return RegionFilter(label=label, expr=expr_region, conflate_regions=iccu, admin_level=4, osm_name=_OSM_NAME.get(iccu))
 
     # Italian province name
-    expr_province = pl.col("provincia").str.to_lowercase() == label
+    expr_province = pl.col("provincia").str.to_lowercase() == lower
     matched = df.filter(expr_province)
     if not matched.is_empty():
         return _province_filter(label, expr_province, matched)

@@ -1,6 +1,8 @@
 """Shared paths and helpers for the ICCU library import pipeline."""
 
 import argparse
+import re
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 
@@ -23,6 +25,19 @@ ALL_REGION = "all"
 
 REGION_METAVAR = f"CODE|NAME|REGION[,...]|{ALL_REGION}"
 REGION_HELP = "2-char province code, province name, Italian region name, comma-separated list, or 'all' (default: all)"
+
+
+def safe_label(term: str) -> str:
+    """Return a filesystem- and GitHub-asset-safe label for a region term.
+
+    Lowercases, strips accents via NFKD, then collapses any run of
+    non-alphanumeric characters to a single underscore.
+    Examples: "L'Aquila" -> "l_aquila", "Reggio Calabria" -> "reggio_calabria",
+              "Forlì-Cesena" -> "forli_cesena", "Vallée d'Aoste" -> "vallee_d_aoste".
+    """
+    nfkd = unicodedata.normalize("NFKD", term.lower())
+    ascii_only = nfkd.encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "_", ascii_only).strip("_")
 
 
 def parse_regions(arg: str) -> list[str]:
