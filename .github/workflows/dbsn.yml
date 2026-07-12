@@ -104,7 +104,7 @@ jobs:
 
             if [[ ${#osm_files[@]} -gt 0 ]]; then
               gh release upload "$DBSN_TAG" "${osm_files[@]}" --clobber
-              for pat in "^${code}_.*\.fgb$" "^${code}_.*\.zip$" "^${code}_.*\.osm$" "^${code}_.*\.osm\.bz2$"; do
+              for pat in "^${code}_.*[.]fgb$" "^${code}_.*[.]zip$" "^${code}_.*[.]osm$" "^${code}_.*[.]osm[.]bz2$"; do
                 while IFS= read -r old; do
                   [[ -n "$old" ]] && gh release delete-asset "$DBSN_TAG" "$old" --yes || true
                 done < <(echo "$assets" | jq -r ".[] | select(test(\"$pat\"))")
@@ -113,7 +113,7 @@ jobs:
               gh release upload "$DBSN_TAG" "${fgb_files[@]}" --clobber
               while IFS= read -r old; do
                 [[ -n "$old" ]] && gh release delete-asset "$DBSN_TAG" "$old" --yes || true
-              done < <(echo "$assets" | jq -r ".[] | select(test(\"^${code}_.*\.zip$\"))")
+              done < <(echo "$assets" | jq -r ".[] | select(test(\"^${code}_.*[.]zip$\"))")
             elif [[ ${#zip_files[@]} -gt 0 ]]; then
               gh release upload "$DBSN_TAG" "${zip_files[@]}" --clobber
             fi
