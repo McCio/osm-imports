@@ -1,6 +1,8 @@
 """Run osm-conflate for an ICCU region, producing OSM and GeoJSON change files."""
 
 import os
+import re
+import shutil
 import sys
 import tempfile
 
@@ -44,6 +46,7 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, ov
     OVERPASS_DIR.mkdir(parents=True, exist_ok=True)
     if overwrite:
         overpass_cache(rf.label).unlink(missing_ok=True)
+        shutil.rmtree(str(overpass_cache(rf.label)) + ".d", ignore_errors=True)
 
     # Write a filtered CSV so conflate's bbox covers only this region/province,
     # not all 13k Italy rows (which causes Overpass timeouts).
@@ -55,6 +58,15 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, ov
     else:
         source_csv = str(CLEAN_CSV)
 
+    if rf.admin_level is not None:
+        area_name = rf.osm_name if rf.osm_name is not None else re.escape(rf.conflate_regions)
+        # The ",i" flag relies on ICU for non-ASCII case folding (e.g. Ü↔ü, É↔é).
+        # overpass-api.de uses ICU; self-hosted Overpass instances compiled without it
+        # may silently return nothing for names like SÜDTIROL or VALLÉE.
+        area_filter = f'area["name"~"^{area_name}$",i]["admin_level"="{rf.admin_level}"]->.a'
+    else:
+        area_filter = None
+
     try:
         _conflate_run(
             profile=PROFILE_PY,
@@ -64,6 +76,7 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, ov
             regions=rf.conflate_regions,
             osm=overpass_cache(rf.label),
             overpass_url=overpass_url,
+            overpass_area=area_filter,
             contact=contact,
             osc=osc,
         )

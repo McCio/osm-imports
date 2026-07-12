@@ -13,7 +13,7 @@ dependencies = [
     # iccu pipeline
     "polars[pyarrow]>=1.12.0,<2",
     "pandas[xml]>=3.0,<4",
-    "osm-conflate @ git+https://github.com/McCio/osm_conflate@v1.6.0",
+    "osm-conflate @ git+https://github.com/McCio/osm_conflate@v1.6.1",
     "phonenumberslite>=9.0,<10",
 ]
 
