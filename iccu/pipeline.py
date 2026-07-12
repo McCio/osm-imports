@@ -25,7 +25,7 @@ def main() -> None:
     clean.run(args.overwrite)
     for region in regions:
         export.run(region, args.overwrite, args.format, args.compress)
-        conflate.run(region, args.overwrite, args.osc, args.overpass_url)
+        conflate.run(region, args.overwrite, args.osc, args.overpass_url, args.contact)
 
 
 if __name__ == "__main__":
