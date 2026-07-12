@@ -21,7 +21,7 @@ from iccu.common import (
 from iccu.region import resolve
 
 
-def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False) -> None:
+def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False, overpass_url: str | None = None) -> None:
     if not CLEAN_CSV.exists():
         print(f"clean.csv not found at {CLEAN_CSV} — run iccu-clean first.", file=sys.stderr)
         sys.exit(1)
@@ -61,6 +61,8 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False) ->
     ]
     if osc:
         cmd.insert(3, "--osc")
+    if overpass_url:
+        cmd += ["--overpass-url", overpass_url]
 
     print("Running:", " ".join(cmd))
     result = subprocess.run(cmd, check=False)
@@ -69,7 +71,10 @@ def run(region: str = ALL_REGION, overwrite: bool = False, osc: bool = False) ->
 
 
 def _extra_args(p) -> None:
-    p.add_argument("--osc", action="store_true", help="Produce osmChange (.osc) instead of JOSM XML (.osm)")
+    p.add_argument(
+        "--osc", action="store_true", help="Produce osmChange (.osc) instead of JOSM XML (.osm) as conflation result"
+    )
+    p.add_argument("--overpass-url", dest="overpass_url", metavar="URL", help="Custom Overpass API endpoint")
 
 
 def main() -> None:
@@ -78,7 +83,7 @@ def main() -> None:
     if not regions:
         sys.exit("error: --region cannot be empty")
     for region in regions:
-        run(region, args.overwrite, args.osc)
+        run(region, args.overwrite, args.osc, args.overpass_url)
 
 
 if __name__ == "__main__":

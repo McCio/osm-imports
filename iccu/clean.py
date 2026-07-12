@@ -1,10 +1,50 @@
 """Join ICCU source files, normalise contacts and addresses, write clean.csv."""
 
+import re
+import sys
+
 import pandas as pd
 import phonenumbers as pn
 import polars as pl
 
 from iccu.common import CLEAN_CSV, SOURCE_DIR, parse_args
+
+
+def _split_phone_variants(val: str) -> list[str]:
+    """Split compound phone values, reconstructing short-suffix variants.
+
+    '+39 0812536361;6140;6073'  → ['+39 0812536361', '+39 0812536140', '+39 0812536073']
+    '+39 0817743166–0812581232' → ['+39 0817743166', '+39 0812581232']  (long: separate number)
+    """
+    if not val:
+        return []
+    val = val.replace(";", "/").replace("–", "/").replace("\xa0", "/")
+    val = re.sub(r"(\d{7,})-(\d)", r"\1/\2", val)
+    parts = val.split("/")
+    if len(parts) == 1:
+        return [val] if val.strip() else []
+
+    result: list[str] = []
+    base = parts[0].strip()
+    base_number = base[4:] if base.startswith("+39 ") else base
+    base_digits = "".join(c for c in base_number if c.isdigit())
+    if base:
+        result.append(base)
+
+    for part in parts[1:]:
+        part = part.strip()
+        if not part:
+            continue
+        part_digits = "".join(c for c in part if c.isdigit())
+        n = len(part_digits)
+        if n == 0:
+            continue
+        if n >= 7 or len(base_digits) <= n:
+            result.append(part if part.startswith("+39") else "+39 " + part)
+        else:
+            result.append("+39 " + base_digits[:-n] + part_digits)
+
+    return result
 
 
 def _strip_strings(df: pl.DataFrame) -> pl.DataFrame:
@@ -66,18 +106,28 @@ def run(overwrite: bool = False) -> None:
         .when(reserved_access.eq(False))
         .then(pl.lit("yes"))
         .alias("access"),
-        pl.when(wheelchair_access.eq(True))
+        pl.when(wheelchair_access.eq("Accessibile"))
         .then(pl.lit("yes"))
-        .when(wheelchair_access.eq(False))
+        .when(wheelchair_access.eq("Parzialmente accessibile"))
+        .then(pl.lit("limited"))
+        .when(wheelchair_access.eq("Non accessibile"))
         .then(pl.lit("no"))
         .alias("wheelchair"),
         pl.when(pl.col("stato-registrazione").eq_missing(None))
         .then(pl.lit("Biblioteca censita"))
         .otherwise("stato-registrazione")
         .alias("stato-registrazione"),
-        pl.col("latitudine").str.replace(",", ".").str.to_decimal(),
-        pl.col("longitudine").str.replace(",", ".").str.to_decimal(),
+        pl.col("latitudine").str.replace(",", ".").cast(pl.Float64, strict=False),
+        pl.col("longitudine").str.replace(",", ".").cast(pl.Float64, strict=False),
     )
+    no_addr_no_coords = complete.filter(
+        pl.col("indirizzo").eq("") & pl.col("latitudine").is_null() & pl.col("longitudine").is_null()
+    )
+    if len(no_addr_no_coords):
+        print(f"  [warn] {len(no_addr_no_coords)} rows have no address and no coordinates (dropped):", file=sys.stderr)
+        for row in no_addr_no_coords.select("codice-isil", "denominazione").to_dicts():
+            print(f"    {row['codice-isil']}  {row['denominazione']!r}", file=sys.stderr)
+
     complete = complete.filter(
         pl.col("stato-registrazione").ne(pl.lit("Biblioteca non più esistente"))
         & pl.col("stato-registrazione").ne(pl.lit("Biblioteca non censita"))
@@ -181,6 +231,28 @@ def run(overwrite: bool = False) -> None:
         .otherwise(pl.col("valore").str.replace("^", "+39 "))
         .alias("valore")
     )
+    # Detect WhatsApp-labelled phone numbers: clone as "whatsapp" tipo before stripping suffix
+    _wa_mask = (pl.col("tipo").eq_missing("Telefono") | pl.col("tipo").eq_missing("Fax")) & pl.col(
+        "valore"
+    ).str.to_lowercase().str.contains("whatsapp", literal=True)
+    _wa_rows = contatti.filter(_wa_mask).with_columns(
+        pl.lit("whatsapp").alias("tipo"),
+        pl.col("valore").str.replace_all("(?i)\\s*whatsapp\\s*", "").str.strip_chars().alias("valore"),
+    )
+    contatti = pl.concat([contatti, _wa_rows])
+
+    contatti = contatti.with_columns(
+        pl.when(pl.col("tipo").eq_missing("Telefono") | pl.col("tipo").eq_missing("Fax"))
+        .then(
+            pl.col("valore")
+            .str.replace_all("^\\+39 \\+0?39\\s*", "+39 ")  # fix double/variant prefix (+39 +039, +39 +39)
+            .str.replace_all("O", "0")  # OCR fix: letter O misread as digit 0
+            .str.replace_all("[A-Za-z].*$", "")  # strip trailing text (works even when followed by ,digit)
+            .str.strip_chars()
+        )
+        .otherwise("valore")
+        .alias("valore")
+    )
     contatti = contatti.with_columns(
         pl.when(pl.col("valore").str.contains("^\\+39 .+(int|dig)"))
         .then(pl.col("valore").str.extract("(int(erno)?|digitare)(\\d+)", 0))
@@ -213,16 +285,50 @@ def run(overwrite: bool = False) -> None:
             & pl.col("valore").str.ends_with("omune")
         )
     )
-    contatti = contatti.with_columns(
-        pl.when(pl.col("tipo").eq_missing("Telefono") | pl.col("tipo").eq_missing("Fax"))
-        .then(
-            pl.col("valore").map_elements(
-                lambda n: pn.format_number(pn.parse(n, "IT"), pn.PhoneNumberFormat.INTERNATIONAL), return_dtype=str
-            )
+    # Expand compound phone/fax values (multiple numbers joined by "/") into separate rows
+    _phone_fax = pl.col("tipo").eq_missing("Telefono") | pl.col("tipo").eq_missing("Fax")
+    _phones = contatti.filter(_phone_fax)
+    _others = contatti.filter(~_phone_fax)
+    _phones = (
+        _phones.with_columns(
+            pl.col("valore").map_elements(_split_phone_variants, return_dtype=pl.List(str)).alias("valore")
         )
-        .otherwise("valore")
+        .explode("valore")
+        .with_columns(pl.col("valore").str.strip_chars())
+        .filter(pl.col("valore").is_not_null() & pl.col("valore").ne(""))
     )
-    phone_values = contatti.filter(pl.col("tipo").eq_missing("Telefono")).select("valore").unique()
+    contatti = pl.concat([_phones, _others])
+
+    is_phone_or_fax = pl.col("tipo").eq_missing("Telefono") | pl.col("tipo").eq_missing("Fax")
+    unparseable = is_phone_or_fax & (
+        ~pl.col("valore").str.contains(r"^\+39 \d{5,}") | pl.col("valore").str.contains("?", literal=True)
+    )
+    for row in contatti.filter(unparseable).select("codice-isil", "tipo", "valore").to_dicts():
+        print(f"  [drop] {row['tipo']} {row['codice-isil']} {row['valore']!r}: pattern mismatch", file=sys.stderr)
+    contatti = contatti.filter(~unparseable)
+
+    _parse_failures: list[tuple[str, str]] = []
+
+    def _fmt_phone(n: str) -> str:
+        # polars evaluates map_elements on every row; non-phone rows reach here but
+        # are discarded by the surrounding when/then — return as-is for them
+        if not n.startswith("+39 "):
+            return n
+        try:
+            return pn.format_number(pn.parse(n, "IT"), pn.PhoneNumberFormat.INTERNATIONAL)
+        except Exception as exc:
+            _parse_failures.append((n, str(exc)))
+            return n  # placeholder; filtered out below
+
+    contatti = contatti.with_columns(
+        pl.when(is_phone_or_fax).then(pl.col("valore").map_elements(_fmt_phone, return_dtype=str)).otherwise("valore")
+    )
+    if _parse_failures:
+        bad_vals = {v for v, _ in _parse_failures}
+        for val, err in sorted({(v, e) for v, e in _parse_failures}):
+            print(f"  [drop] Telefono/Fax {val!r}: {err}", file=sys.stderr)
+        contatti = contatti.filter(~(is_phone_or_fax & pl.col("valore").is_in(list(bad_vals))))
+    phone_values = contatti.filter(pl.col("tipo").eq_missing("Telefono"))["valore"].unique()
     contatti = contatti.filter(~(pl.col("tipo").eq_missing("Fax") & pl.col("valore").is_in(phone_values)))
 
     # socials
@@ -282,6 +388,8 @@ def run(overwrite: bool = False) -> None:
         .then(pl.lit("contact_instagram"))
         .when(pl.col("tipo").eq_missing("twitter"))
         .then(pl.lit("contact_twitter"))
+        .when(pl.col("tipo").eq_missing("whatsapp"))
+        .then(pl.lit("contact_whatsapp"))
         .otherwise("tipo")
         .alias("tipo")
     )
@@ -326,14 +434,24 @@ def run(overwrite: bool = False) -> None:
         "denominazioni-alternative",
         *[
             f"valore_contact_{t}"
-            for t in ("website", "email", "pec", "fax", "phone", "facebook", "instagram", "twitter")
+            for t in ("website", "email", "pec", "fax", "phone", "facebook", "instagram", "twitter", "whatsapp")
         ],
-        *[f"note_contact_{t}" for t in ("website", "email", "pec", "fax", "phone", "facebook", "instagram", "twitter")],
+        *[
+            f"note_contact_{t}"
+            for t in ("website", "email", "pec", "fax", "phone", "facebook", "instagram", "twitter", "whatsapp")
+        ],
     ]
-    complete.with_columns(
+    result = complete.with_columns(
         pl.col(col).list.join(";").replace("", None) for col in list_cols if col in complete.columns
-    ).write_csv(CLEAN_CSV)
+    )
+    result.write_csv(CLEAN_CSV)
     print(f"Written: {CLEAN_CSV}")
+
+    no_coords = result.filter(pl.col("latitudine").is_null() | pl.col("longitudine").is_null())
+    if len(no_coords):
+        print(f"  [warn] {len(no_coords)} rows have address but no coordinates (will be skipped in export/conflate):", file=sys.stderr)
+        for row in no_coords.select("codice-isil", "denominazione", "indirizzo").to_dicts():
+            print(f"    {row['codice-isil']}  {row['denominazione']!r}  {row['indirizzo']!r}", file=sys.stderr)
 
 
 def main() -> None:

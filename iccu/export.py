@@ -36,6 +36,7 @@ COL_MAPPER = {
     "valore_contact_instagram": "contact:instagram",
     "valore_contact_facebook": "contact:facebook",
     "valore_contact_twitter": "contact:twitter",
+    "valore_contact_whatsapp": "contact:whatsapp",
     "access": "access",
     "wheelchair": "wheelchair",
     "cap": "addr:postcode",
@@ -76,7 +77,7 @@ def _load(region: str) -> tuple[pl.DataFrame, RegionFilter]:
     return df, rf
 
 
-def run(region: str = ALL_REGION, overwrite: bool = False, fmt: str = "both") -> None:
+def run(region: str = ALL_REGION, overwrite: bool = False, fmt: str = "both", compress: bool = False) -> None:
     df, rf = _load(region)
     label = rf.label
     print(f"=== Step 3: Export ({label}) ===")
@@ -86,7 +87,7 @@ def run(region: str = ALL_REGION, overwrite: bool = False, fmt: str = "both") ->
         if fmt in ("geojson", "both"):
             targets.append(dataset_geojson(label))
         if fmt in ("osm", "both"):
-            targets.append(dataset_osm(label))
+            targets.append(dataset_osm(label, compress))
         if all(t.exists() for t in targets):
             print(f"Export outputs exist for '{label}', skipping (use --overwrite to reprocess).")
             return
@@ -98,8 +99,9 @@ def run(region: str = ALL_REGION, overwrite: bool = False, fmt: str = "both") ->
         n = write_geojson(features, dataset_geojson(label), _translate, _GEOJSON_SCHEMA)
         print(f"Written: {dataset_geojson(label)} ({n} features)")
     if fmt in ("osm", "both"):
-        n = write_osm(features, dataset_osm(label), _translate)
-        print(f"Written: {dataset_osm(label)} ({n} nodes)")
+        p = dataset_osm(label, compress)
+        n = write_osm(features, p, _translate)
+        print(f"Written: {p} ({n} nodes)")
 
 
 def _extra_args(p) -> None:
@@ -110,6 +112,7 @@ def _extra_args(p) -> None:
         metavar="osm|geojson|both",
         help="Output format (default: both)",
     )
+    p.add_argument("--compress", action="store_true", help="Compress OSM output as .osm.bz2")
 
 
 def main() -> None:
@@ -118,7 +121,7 @@ def main() -> None:
     if not regions:
         sys.exit("error: --region cannot be empty")
     for region in regions:
-        run(region, args.overwrite, args.format)
+        run(region, args.overwrite, args.format, args.compress)
 
 
 if __name__ == "__main__":

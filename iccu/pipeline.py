@@ -8,7 +8,7 @@ from iccu.common import parse_args, parse_regions
 
 def _extra_args(p) -> None:
     export._extra_args(p)
-    p.add_argument("--osc", action="store_true", help="Produce osmChange (.osc) from conflate instead of JOSM XML")
+    conflate._extra_args(p)
 
 
 def main() -> None:
@@ -24,8 +24,8 @@ def main() -> None:
     download.run(args.overwrite)
     clean.run(args.overwrite)
     for region in regions:
-        export.run(region, args.overwrite, args.format)
-        conflate.run(region, args.overwrite, args.osc)
+        export.run(region, args.overwrite, args.format, args.compress)
+        conflate.run(region, args.overwrite, args.osc, args.overpass_url)
 
 
 if __name__ == "__main__":

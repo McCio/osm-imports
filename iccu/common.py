@@ -54,8 +54,8 @@ def osm_output_dir(region: str) -> Path:
     return OSM_DIR / region.lower()
 
 
-def dataset_osm(region: str) -> Path:
-    return osm_output_dir(region) / "dataset.osm"
+def dataset_osm(region: str, compress: bool = False) -> Path:
+    return osm_output_dir(region) / ("dataset.osm.bz2" if compress else "dataset.osm")
 
 
 def dataset_geojson(region: str) -> Path:

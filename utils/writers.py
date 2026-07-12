@@ -12,10 +12,13 @@ import osmium
 _INVALID_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f￾￿]")
 
 
+_OSM_MAX_TAG = 255
+
+
 def _safe_tags(raw: dict | None) -> dict:
     if not raw:
         return {}
-    return {k: _INVALID_XML.sub("", str(v)) for k, v in raw.items() if v is not None}
+    return {k: _INVALID_XML.sub("", str(v))[:_OSM_MAX_TAG] for k, v in raw.items() if v is not None}
 
 
 def _translated(src, translate_fn: Callable):
@@ -142,9 +145,11 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None) -> in
 def write_geojson(src, output_path: Path, translate_fn: Callable, schema: dict, crs=None) -> int:
     if crs is None:
         crs = getattr(src, "crs", "EPSG:4326")
+    schema_props = set(schema.get("properties", {}).keys())
     written = 0
     with fiona.open(str(output_path), "w", driver="GeoJSON", schema=schema, crs=crs) as dst:
         for geom, tags in _translated(src, translate_fn):
-            dst.write({"type": "Feature", "geometry": geom, "properties": tags})
+            props = {**{k: None for k in schema_props}, **tags}
+            dst.write({"type": "Feature", "geometry": geom, "properties": props})
             written += 1
     return written
