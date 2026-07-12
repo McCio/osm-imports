@@ -1,0 +1,150 @@
+name: ICCU Pipeline
+run-name: "ICCU — ${{ inputs.region }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: 'Province code/name, region name, or "all"; comma-separated for multiple'
+        required: true
+        default: all
+      overwrite:
+        description: 'Force re-process even if outputs exist'
+        type: boolean
+        required: false
+        default: false
+      osc:
+        description: 'Produce osmChange (.osc) instead of JOSM XML (.osm) for conflation'
+        type: boolean
+        required: false
+        default: false
+      overpass_url:
+        description: 'Custom Overpass API endpoint (leave blank for default)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    env:
+      REGION: ${{ inputs.region }}
+      OVERWRITE: ${{ inputs.overwrite }}
+      OSC: ${{ inputs.osc }}
+      OVERPASS_URL: ${{ inputs.overpass_url }}
+      CONTACT: https://github.com/${{ github.actor }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Compute release tag
+        run: |
+          DATE=$(jq -r '.metadati["data-estrazione"][:10]' data/iccu/source/biblioteche.json)
+          echo "ICCU_TAG=iccu-${DATE}" >> $GITHUB_ENV
+          echo "ICCU_DATE=${DATE}" >> $GITHUB_ENV
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$ICCU_TAG" &>/dev/null; then
+            gh release create "$ICCU_TAG" \
+              --title "ICCU Libraries $ICCU_DATE" \
+              --notes "ICCU library data (OSM XML), version $ICCU_DATE"
+          fi
+
+      - name: Restore data from release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data/iccu
+          gh release download "$ICCU_TAG" --dir data/iccu --pattern "clean.csv" || true
+          IFS=',' read -ra REGIONS <<< "$REGION"
+          for region in "${REGIONS[@]}"; do
+            region=$(echo "$region" | xargs | tr '[:upper:]' '[:lower:]')
+            [[ -z "$region" ]] && continue
+            mkdir -p "data/iccu/osm/${region}"
+            gh release download "$ICCU_TAG" --dir /tmp/iccu-restore --pattern "${region}_*" 2>/dev/null || true
+            for f in /tmp/iccu-restore/${region}_*; do
+              [[ -f "$f" ]] || continue
+              basename="${f##*/}"
+              mv "$f" "data/iccu/osm/${region}/${basename#${region}_}"
+            done
+          done
+
+      - name: Restore Overpass cache
+        uses: actions/cache@v6.1.0
+        with:
+          path: data/iccu/overpass
+          key: iccu-overpass
+
+      - name: Run clean
+        run: |
+          args=()
+          [[ "$OVERWRITE" == 'true' ]] && args+=(--overwrite)
+          uv run iccu-clean "${args[@]}"
+
+      - name: Run export
+        run: |
+          args=(--region "$REGION" --compress)
+          [[ "$OVERWRITE" == 'true' ]] && args+=(--overwrite)
+          uv run iccu-export "${args[@]}"
+
+      - name: Run conflate
+        run: |
+          args=(--region "$REGION")
+          [[ "$OVERWRITE" == 'true' ]] && args+=(--overwrite)
+          [[ "$OSC" == 'true' ]] && args+=(--osc)
+          [[ -n "$OVERPASS_URL" ]] && args+=(--overpass-url "$OVERPASS_URL")
+          [[ -n "$CONTACT" ]] && args+=(--contact "$CONTACT")
+          uv run iccu-conflate "${args[@]}"
+
+      - name: Save results to release
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ -f data/iccu/clean.csv ]] && gh release upload "$ICCU_TAG" data/iccu/clean.csv --clobber || true
+
+          assets=$(gh release view "$ICCU_TAG" --json assets --jq '[.assets[].name]')
+          IFS=',' read -ra REGIONS <<< "$REGION"
+          for region in "${REGIONS[@]}"; do
+            region=$(echo "$region" | xargs | tr '[:upper:]' '[:lower:]')
+            [[ -z "$region" ]] && continue
+
+            dir="data/iccu/osm/${region}"
+            [[ -d "$dir" ]] || continue
+
+            shopt -s nullglob
+            uploads=()
+            for src in "$dir/dataset.osm.bz2" "$dir/changes.osm" "$dir/changes.osc" "$dir/changes.geojson"; do
+              [[ -f "$src" ]] || continue
+              tmp="/tmp/${region}_$(basename "$src")"
+              cp "$src" "$tmp"
+              uploads+=("$tmp")
+            done
+
+            if [[ ${#uploads[@]} -gt 0 ]]; then
+              gh release upload "$ICCU_TAG" "${uploads[@]}" --clobber
+              # Remove the format not produced this run (osc vs osm for changes)
+              if [[ -f "$dir/changes.osc" ]]; then
+                while IFS= read -r old; do
+                  [[ -n "$old" ]] && gh release delete-asset "$ICCU_TAG" "$old" --yes || true
+                done < <(echo "$assets" | jq -r ".[] | select(test(\"^${region}_changes\\.osm$\"))")
+              elif [[ -f "$dir/changes.osm" ]]; then
+                while IFS= read -r old; do
+                  [[ -n "$old" ]] && gh release delete-asset "$ICCU_TAG" "$old" --yes || true
+                done < <(echo "$assets" | jq -r ".[] | select(test(\"^${region}_changes\\.osc$\"))")
+              fi
+            fi
+          done
