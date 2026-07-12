@@ -5,8 +5,10 @@ import sys
 import fiona
 
 from dbsn.common import BUILDINGS_DIR, OSM_DIR, Province, parse_args, rel
-from dbsn.translate import translate
+from dbsn.translate import TAG_KEYS, translate
 from utils.convert import write_geojson, write_osm
+
+_GEOJSON_SCHEMA = {"geometry": "Unknown", "properties": dict.fromkeys(TAG_KEYS, "str")}
 
 
 def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: bool = False) -> bool | None:
@@ -35,9 +37,9 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
     try:
         with fiona.open(str(in_fgb)) as src:
             if fmt == "geojson":
-                count_written = write_geojson(src, out_path, translate)
+                count_written = write_geojson(src, out_path, translate, _GEOJSON_SCHEMA)
             else:
-                count_written = write_osm(src, out_path, translate, compress, src.bounds)
+                count_written = write_osm(src, out_path, translate, src.bounds)
         size = out_path.stat().st_size // 1024
         print(f"  [done   ] {p['code']} {p['province']}: {rel(out_path)} ({count_written} features, {size}KB)")
         return True

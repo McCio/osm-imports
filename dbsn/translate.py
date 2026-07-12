@@ -30,6 +30,21 @@ Changes vs upstream:
   - edifc_at (altezza): mapped to height=
 """
 
+TAG_KEYS = [
+    "name",
+    "layer",
+    "building",
+    "man_made",
+    "tower:type",
+    "house",
+    "amenity",
+    "tourism",
+    "construction",
+    "ruins",
+    "historic",
+    "height",
+]
+
 
 def translate(attrs):
     if not attrs:
