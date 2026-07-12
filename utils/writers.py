@@ -111,7 +111,11 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None) -> in
 
     with osmium.SimpleWriter(str(output_path), header=h) as writer:
         for geom, tags in _translated(src, translate_fn):
-            if geom["type"] == "Polygon":
+            if geom["type"] == "Point":
+                lon, lat = geom["coordinates"][0], geom["coordinates"][1]
+                nid = next(node_ids)
+                writer.add_node(osmium.osm.mutable.Node(id=nid, location=osmium.osm.Location(lon, lat), tags=tags))
+            elif geom["type"] == "Polygon":
                 w = _add_area(geom["coordinates"][0], node_ids, way_ids, writer, tags=tags)
                 if w is None:
                     continue
@@ -135,9 +139,11 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None) -> in
     return written
 
 
-def write_geojson(src, output_path: Path, translate_fn: Callable, schema: dict) -> int:
+def write_geojson(src, output_path: Path, translate_fn: Callable, schema: dict, crs=None) -> int:
+    if crs is None:
+        crs = getattr(src, "crs", "EPSG:4326")
     written = 0
-    with fiona.open(str(output_path), "w", driver="GeoJSON", schema=schema, crs=src.crs) as dst:
+    with fiona.open(str(output_path), "w", driver="GeoJSON", schema=schema, crs=crs) as dst:
         for geom, tags in _translated(src, translate_fn):
             dst.write({"type": "Feature", "geometry": geom, "properties": tags})
             written += 1

@@ -43,11 +43,11 @@ def _extract_province(p: Province, overwrite: bool) -> bool | None:
         osm_path = OSM_DIR / f"{p['code']}_{p['date']}.osm"
         osm_bz2_path = OSM_DIR / f"{p['code']}_{p['date']}.osm.bz2"
         if osm_path.exists() or osm_bz2_path.exists():
-            print(f"  [skip   ] {p['code']} {p['province']}: OSM already done")
+            print(f"  [skip   ] {p['code']} {p['province']}: OSM already done (use --overwrite to reprocess)")
             return True
         if out_fgb.exists():
             size = out_fgb.stat().st_size // 1024
-            print(f"  [skip   ] {p['code']} {p['province']}: {rel(out_fgb)} ({size}KB)")
+            print(f"  [skip   ] {p['code']} {p['province']}: {rel(out_fgb)} ({size}KB) (use --overwrite to reprocess)")
             return True
 
     zip_path = ZIPS_DIR / p["zip_name"]
@@ -66,7 +66,7 @@ def _extract_province(p: Province, overwrite: bool) -> bool | None:
 
     gdbs = sorted(unzip_dir.rglob("*.gdb"))
     if not gdbs:
-        print(f"  [error  ] {p['code']} {p['province']}: no .gdb found in {rel(unzip_dir)}")
+        print(f"  [error  ] {p['code']} {p['province']}: no .gdb found in {rel(unzip_dir)}", file=sys.stderr)
         shutil.rmtree(unzip_dir)
         return False
     gdb = gdbs[0]
@@ -99,7 +99,7 @@ def _extract_province(p: Province, overwrite: bool) -> bool | None:
         return True
 
     except Exception as exc:
-        print(f"  [error  ] {p['code']} {p['province']}: {exc}")
+        print(f"  [error  ] {p['code']} {p['province']}: {exc}", file=sys.stderr)
         if out_fgb.exists():
             out_fgb.unlink()
         shutil.rmtree(unzip_dir, ignore_errors=True)

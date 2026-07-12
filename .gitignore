@@ -14,6 +14,11 @@ data/*
 !data/dbsn/
 data/dbsn/*
 !data/dbsn/sources.json
+!data/iccu/
+data/iccu/*.zip
+data/iccu/clean.csv
+data/iccu/overpass/
+data/iccu/osm/
 
 # Reference file (temporary, local-only files)s
 reference/

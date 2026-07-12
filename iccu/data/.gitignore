@@ -1,8 +1,0 @@
-*.zip
-*.xlsx
-*.osm
-*.osc
-*.geojson
-*\#
-.~lock*
-clean.csv

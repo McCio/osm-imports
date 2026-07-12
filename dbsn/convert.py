@@ -6,7 +6,7 @@ import fiona
 
 from dbsn.common import BUILDINGS_DIR, OSM_DIR, Province, parse_args, rel
 from dbsn.translate import TAG_KEYS, translate
-from utils.convert import write_geojson, write_osm
+from utils.writers import write_geojson, write_osm
 
 _GEOJSON_SCHEMA = {"geometry": "Unknown", "properties": dict.fromkeys(TAG_KEYS, "str")}
 
@@ -27,7 +27,7 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
     out_path = OSM_DIR / f"{p['code']}_{p['date']}.{ext}"
     if out_path.exists() and not overwrite:
         size = out_path.stat().st_size // 1024
-        print(f"  [skip   ] {p['code']} {p['province']}: {rel(out_path)} ({size}KB)")
+        print(f"  [skip   ] {p['code']} {p['province']}: {rel(out_path)} ({size}KB) (use --overwrite to reprocess)")
         return True
 
     if out_path.exists():
@@ -42,7 +42,10 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
                 try:
                     bounds = src.bounds
                 except Exception as exc:
-                    print(f"  [warn   ] {p['code']} {p['province']}: bounds unavailable ({exc}), omitting bbox")
+                    print(
+                        f"  [warn   ] {p['code']} {p['province']}: bounds unavailable ({exc}), omitting bbox",
+                        file=sys.stderr,
+                    )
                     bounds = None
                 count_written = write_osm(src, out_path, translate, bounds)
         size = out_path.stat().st_size // 1024
@@ -50,7 +53,7 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
         return True
 
     except Exception as exc:
-        print(f"  [error  ] {p['code']} {p['province']}: {exc}")
+        print(f"  [error  ] {p['code']} {p['province']}: {exc}", file=sys.stderr)
         if out_path.exists():
             out_path.unlink()
         return False

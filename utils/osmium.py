@@ -1,6 +1,7 @@
 """osmium validation helpers."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -19,6 +20,6 @@ def validate_file(path: str) -> bool:
             for line in result.stdout.splitlines():
                 print(f"    {line}")
         if result.returncode != 0:
-            print(f"  [error   ] {rel_path}: {result.stderr.strip()}")
+            print(f"  [error   ] {rel_path}: {result.stderr.strip()}", file=sys.stderr)
             return False
     return True

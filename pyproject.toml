@@ -10,6 +10,11 @@ dependencies = [
     "fiona>=1.10",      # ships bundled GDAL+PROJ wheels; no system GDAL needed
     "osmium>=4.3.1",
     "pyproj>=3.7.2",
+    # iccu pipeline
+    "polars[pyarrow]>=1.12.0,<2",
+    "pandas[xml]>=3.0,<4",
+    "osm-conflate==1.4.1",
+    "phonenumberslite>=9.0,<10",
 ]
 
 [project.scripts]
@@ -20,14 +25,19 @@ dbsn-convert     = "dbsn.convert:main"
 dbsn-validate    = "dbsn.validate:main"
 dbsn-all         = "dbsn.pipeline:main"
 dbsn-list-codes  = "dbsn.list_codes:main"
+iccu-download    = "iccu.download:main"
+iccu-clean       = "iccu.clean:main"
+iccu-export      = "iccu.export:main"
+iccu-conflate    = "iccu.conflate:main"
+iccu-all         = "iccu.pipeline:main"
 
 [dependency-groups]
-dev = ["ruff>=0.4"]
+dev = ["ruff>=0.4", "pandas-stubs~=3.0.3"]
 
 [tool.ruff]
 target-version = "py313"
 line-length = 120
-include = ["dbsn/**", "utils/**"]
+include = ["dbsn/**/*.py", "iccu/**/*.py", "utils/**/*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF", "SIM", "PTH", "PLC0415"]

@@ -40,12 +40,12 @@ def rel(path) -> str:
 def fmt_size(n: int | None) -> str:
     if n is None:
         return "unknown"
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.1f} MB"
+    if n >= 1_048_576:
+        return f"{n / 1_048_576:.1f} MB"
     return f"{n // 1024} KB"
 
 
-def http_client(**kwargs):
+def http_client(**kwargs) -> httpx.Client:
     return httpx.Client(headers={"User-Agent": USER_AGENT}, **kwargs)
 
 

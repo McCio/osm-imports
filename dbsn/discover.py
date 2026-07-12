@@ -90,7 +90,7 @@ def _scrape_igm(client: httpx.Client) -> dict[str, dict]:
                 found[code] = {"date": date_str, "url": url}
         print(f"  [igm] {len(found)} provinces found on IGM download page")
     except Exception as exc:
-        print(f"  [igm] scrape failed ({exc}), using TSV IGM URLs")
+        print(f"  [igm] scrape failed ({exc}), using TSV IGM URLs", file=sys.stderr)
     return found
 
 

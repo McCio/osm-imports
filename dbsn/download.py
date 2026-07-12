@@ -2,7 +2,7 @@
 
 import sys
 
-import httpx  # used for httpx.HTTPError type
+import httpx  # httpx.Client type annotation
 
 from dbsn.common import (
     BUILDINGS_DIR,
@@ -24,14 +24,14 @@ def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bo
         osm_bz2_path = OSM_DIR / f"{p['code']}_{p['date']}.osm.bz2"
         fgb_path = BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb"
         if osm_path.exists() or osm_bz2_path.exists():
-            print(f"  [skip ] {p['code']} {p['province']}: OSM already done")
+            print(f"  [skip ] {p['code']} {p['province']}: OSM already done (use --overwrite to reprocess)")
             return True
         if fgb_path.exists():
-            print(f"  [skip ] {p['code']} {p['province']}: FGB already extracted")
+            print(f"  [skip ] {p['code']} {p['province']}: FGB already extracted (use --overwrite to reprocess)")
             return True
         if zip_path.exists():
             size = zip_path.stat().st_size // (1024 * 1024)
-            print(f"  [skip ] {p['code']} {p['province']}: {p['zip_name']} ({size}MB)")
+            print(f"  [skip ] {p['code']} {p['province']}: {p['zip_name']} ({size}MB) (use --overwrite to reprocess)")
             return True
 
     urls = [("primary", p["url"])]
@@ -62,11 +62,11 @@ def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bo
             print(f"\r  [done ] {p['code']} {p['province']}: {rel(zip_path)} ({size}MB)")
             return True
         except Exception as exc:
-            print(f"\r  [fail ] {p['code']} {p['province']} ({label}): {exc}")
+            print(f"\r  [fail ] {p['code']} {p['province']} ({label}): {exc}", file=sys.stderr)
             if zip_path.exists():
                 zip_path.unlink()
 
-    print(f"  [error] {p['code']} {p['province']}: all URLs failed")
+    print(f"  [error] {p['code']} {p['province']}: all URLs failed", file=sys.stderr)
     return False
 
 

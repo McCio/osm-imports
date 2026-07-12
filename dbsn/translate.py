@@ -46,7 +46,7 @@ TAG_KEYS = [
 ]
 
 
-def translate(attrs):
+def translate(attrs: dict | None) -> dict | None:
     if not attrs:
         return
 

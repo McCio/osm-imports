@@ -7,7 +7,9 @@ def main() -> None:
     args = parse_args(
         "Print province codes for a selector (space-separated)",
         overwrite=False,
-        setup=lambda p: p.add_argument("-v", "--verbose", action="count", default=0, help="Increase output detail (-v, -vv, -vvv)"),
+        setup=lambda p: p.add_argument(
+            "-v", "--verbose", action="count", default=0, help="Increase output detail (-v, -vv, -vvv)"
+        ),
     )
     v = args.verbose
     if v == 0:

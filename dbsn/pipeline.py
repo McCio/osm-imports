@@ -3,7 +3,8 @@
 import sys
 
 from dbsn import convert, discover, download, extract, validate
-from dbsn.common import SOURCES_JSON, filter_provinces, parse_args, read_sources
+from dbsn.common import SOURCES_JSON, filter_provinces, parse_args
+from dbsn.common import read_sources as _read_sources
 
 
 def _extra_args(p) -> None:
@@ -18,10 +19,11 @@ def main() -> None:
         setup=_extra_args,
     )
     if args.overwrite or not SOURCES_JSON.exists() or args.province.lower() == "all":
-        discover.run(args.overwrite)
+        sources = discover.run(args.overwrite)
     else:
         print("=== Step 0: Discover (skipped — sources.json exists, province filtered) ===")
-    provinces = filter_provinces(read_sources(), args.province)
+        sources = _read_sources()
+    provinces = filter_provinces(sources, args.province)
     if not provinces:
         sys.exit(f"No province matched '{args.province}'")
     download.run(provinces, args.overwrite)
