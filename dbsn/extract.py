@@ -6,7 +6,7 @@ import zipfile
 
 import fiona
 from fiona.crs import CRS
-from fiona.transform import transform_geom
+from pyproj import Transformer
 
 from dbsn.common import (
     BUILDINGS_DIR,
@@ -20,6 +20,21 @@ from dbsn.common import (
 )
 
 _WGS84 = CRS.from_epsg(4326)
+
+
+def _reproject(geom: dict, t: Transformer) -> dict:
+    def xf_ring(ring):
+        xs, ys = t.transform([c[0] for c in ring], [c[1] for c in ring])
+        if len(ring[0]) > 2:
+            return [[x, y, c[2]] for (x, y), c in zip(zip(xs, ys, strict=True), ring, strict=True)]
+        return [[x, y] for x, y in zip(xs, ys, strict=True)]
+
+    gtype = geom["type"]
+    if gtype == "Polygon":
+        return {"type": "Polygon", "coordinates": [xf_ring(r) for r in geom["coordinates"]]}
+    if gtype == "MultiPolygon":
+        return {"type": "MultiPolygon", "coordinates": [[xf_ring(r) for r in poly] for poly in geom["coordinates"]]}
+    return geom
 
 
 def _extract_province(p: Province, overwrite: bool) -> bool | None:
@@ -59,34 +74,27 @@ def _extract_province(p: Province, overwrite: bool) -> bool | None:
     print(f"  [extract] {p['code']} {p['province']}: {rel(gdb)} → {rel(out_fgb)}")
     try:
         with fiona.open(str(gdb), layer="edifc") as src:
-            src_crs = src.crs
-            schema = {
-                "geometry": src.schema["geometry"],
-                "properties": src.schema["properties"],
-            }
-            features = []
-            for feat in src:
-                if feat["properties"].get("meta_ist") in EXCLUDE_META_IST:
-                    continue
-                geom = transform_geom(src_crs, _WGS84, dict(feat["geometry"]))
-                features.append(
-                    {
-                        "type": "Feature",
-                        "geometry": geom,
-                        "properties": dict(feat["properties"]),
-                    }
-                )
-
-        BUILDINGS_DIR.mkdir(parents=True, exist_ok=True)
-        if out_fgb.exists():
-            out_fgb.unlink()
-
-        with fiona.open(str(out_fgb), "w", driver="FlatGeobuf", schema=schema, crs=_WGS84) as dst:
-            for feat in features:
-                dst.write(feat)
+            t = Transformer.from_crs(src.crs, _WGS84, always_xy=True)
+            schema = {"geometry": src.schema["geometry"], "properties": src.schema["properties"]}
+            BUILDINGS_DIR.mkdir(parents=True, exist_ok=True)
+            if out_fgb.exists():
+                out_fgb.unlink()
+            written = 0
+            with fiona.open(str(out_fgb), "w", driver="FlatGeobuf", schema=schema, crs=_WGS84) as dst:
+                for feat in src:
+                    if feat["properties"].get("meta_ist") in EXCLUDE_META_IST:
+                        continue
+                    dst.write(
+                        {
+                            "type": "Feature",
+                            "geometry": _reproject(dict(feat["geometry"]), t),
+                            "properties": dict(feat["properties"]),
+                        }
+                    )
+                    written += 1
 
         size = out_fgb.stat().st_size // 1024
-        print(f"  [done   ] {p['code']} {p['province']}: {rel(out_fgb)} ({len(features)} features, {size}KB)")
+        print(f"  [done   ] {p['code']} {p['province']}: {rel(out_fgb)} ({written} features, {size}KB)")
         shutil.rmtree(unzip_dir)
         return True
 

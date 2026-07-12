@@ -9,6 +9,7 @@ dependencies = [
     "beautifulsoup4>=4.15",
     "fiona>=1.10",      # ships bundled GDAL+PROJ wheels; no system GDAL needed
     "osmium>=4.3.1",
+    "pyproj>=3.7.2",
 ]
 
 [project.scripts]
