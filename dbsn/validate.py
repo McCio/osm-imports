@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from dbsn.common import OSM_DIR, Province, parse_args, rel
-from utils.osmium import validate_file
+from utils.osm_validate import validate_file
 
 
 def _osm_files(p: Province) -> list[str]:
