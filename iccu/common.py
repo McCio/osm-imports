@@ -16,16 +16,8 @@ ETAG_FILE = SOURCE_DIR / "iccu.etag"
 ZIP_FILE = DATA_DIR / "iccu.zip"
 CLEAN_CSV = DATA_DIR / "clean.csv"
 PROFILE_PY = Path(__file__).parent / "profile.py"
-GEOCODER_PATCH = Path(__file__).parent / "geocoder.patch"
-
 SOURCE_URL = "https://opendata.anagrafe.iccu.sbn.it/opendata.zip"
 USER_AGENT = "iccu-pipeline/0.1 (OSM ICCU libraries import; https://wiki.openstreetmap.org/wiki/Import/Catalogue/ICCU)"
-
-# conflate/geocoder.py has a bug (self.filter instead of self.f_negate).
-# Apply GEOCODER_PATCH to the installed conflate package if conflate fails:
-#   patch \
-#     "$(python -c "import conflate; print(conflate.__file__.replace('__init__.py','geocoder.py'))")" \
-#     iccu/geocoder.patch
 
 ALL_REGION = "all"
 

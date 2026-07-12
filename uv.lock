@@ -173,7 +173,7 @@ requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.15" },
     { name = "fiona", specifier = ">=1.10" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "osm-conflate", specifier = "==1.4.1" },
+    { name = "osm-conflate", git = "https://github.com/McCio/osm_conflate?rev=v1.5.0" },
     { name = "osmium", specifier = ">=4.3.1" },
     { name = "pandas", extras = ["xml"], specifier = ">=3.0,<4" },
     { name = "phonenumberslite", specifier = ">=9.0,<10" },
@@ -365,13 +365,12 @@ wheels = [
 
 [[package]]
 name = "osm-conflate"
-version = "1.4.1"
-source = { registry = "https://pypi.org/simple" }
+version = "1.5.0"
+source = { git = "https://github.com/McCio/osm_conflate?rev=v1.5.0#5a1d509f7c2b81af75d6db1226224d6b28536686" }
 dependencies = [
     { name = "kdtree" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/46/d9/77bc12afea24df7fd5f5c56a9077a1c0df375f14b261e726b1839dc3b4b4/osm_conflate-1.4.1.tar.gz", hash = "sha256:8dcf1312b98cedeb50136d91c3c802019a2417f66b1dacb73fc4f97e13bf92ea", size = 6169000, upload-time = "2019-06-04T08:16:27.941Z" }
 
 [[package]]
 name = "osmium"

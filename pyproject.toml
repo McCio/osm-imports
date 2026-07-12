@@ -13,7 +13,7 @@ dependencies = [
     # iccu pipeline
     "polars[pyarrow]>=1.12.0,<2",
     "pandas[xml]>=3.0,<4",
-    "osm-conflate==1.4.1",
+    "osm-conflate @ git+https://github.com/McCio/osm_conflate@v1.5.0",
     "phonenumberslite>=9.0,<10",
 ]
 
@@ -41,6 +41,9 @@ include = ["dbsn/**/*.py", "iccu/**/*.py", "utils/**/*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF", "SIM", "PTH", "PLC0415"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [build-system]
 requires = ["hatchling"]
