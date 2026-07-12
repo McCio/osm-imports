@@ -147,47 +147,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dbsn"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "beautifulsoup4" },
-    { name = "fiona" },
-    { name = "httpx" },
-    { name = "osm-conflate" },
-    { name = "osmium" },
-    { name = "pandas", extra = ["xml"] },
-    { name = "phonenumberslite" },
-    { name = "polars", extra = ["pyarrow"] },
-    { name = "pyproj" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "pandas-stubs" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "beautifulsoup4", specifier = ">=4.15" },
-    { name = "fiona", specifier = ">=1.10" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "osm-conflate", git = "https://github.com/McCio/osm_conflate?rev=v1.6.1" },
-    { name = "osmium", specifier = ">=4.3.1" },
-    { name = "pandas", extras = ["xml"], specifier = ">=3.0,<4" },
-    { name = "phonenumberslite", specifier = ">=9.0,<10" },
-    { name = "polars", extras = ["pyarrow"], specifier = ">=1.12.0,<2" },
-    { name = "pyproj", specifier = ">=3.7.2" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pandas-stubs", specifier = "~=3.0.3" },
-    { name = "ruff", specifier = ">=0.4" },
-]
-
-[[package]]
 name = "fiona"
 version = "1.10.1"
 source = { registry = "https://pypi.org/simple" }
@@ -370,6 +329,47 @@ source = { git = "https://github.com/McCio/osm_conflate?rev=v1.6.1#602a92cd9a5b5
 dependencies = [
     { name = "kdtree" },
     { name = "requests" },
+]
+
+[[package]]
+name = "osm-imports"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "beautifulsoup4" },
+    { name = "fiona" },
+    { name = "httpx" },
+    { name = "osm-conflate" },
+    { name = "osmium" },
+    { name = "pandas", extra = ["xml"] },
+    { name = "phonenumberslite" },
+    { name = "polars", extra = ["pyarrow"] },
+    { name = "pyproj" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pandas-stubs" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "beautifulsoup4", specifier = ">=4.15" },
+    { name = "fiona", specifier = ">=1.10" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "osm-conflate", git = "https://github.com/McCio/osm_conflate?rev=v1.6.1" },
+    { name = "osmium", specifier = ">=4.3.1" },
+    { name = "pandas", extras = ["xml"], specifier = ">=3.0,<4" },
+    { name = "phonenumberslite", specifier = ">=9.0,<10" },
+    { name = "polars", extras = ["pyarrow"], specifier = ">=1.12.0,<2" },
+    { name = "pyproj", specifier = ">=3.7.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pandas-stubs", specifier = "~=3.0.3" },
+    { name = "ruff", specifier = ">=0.4" },
 ]
 
 [[package]]

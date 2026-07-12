@@ -1,7 +1,7 @@
 [project]
-name = "dbsn"
+name = "osm-imports"
 version = "0.1.0"
-description = "DBSN buildings import pipeline for OSM"
+description = "Data preparation tools for Italian geographic datasets into OSM format"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -41,6 +41,9 @@ include = ["dbsn/**/*.py", "iccu/**/*.py", "utils/**/*.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF", "SIM", "PTH", "PLC0415"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dbsn", "iccu", "utils"]
 
 [tool.hatch.metadata]
 allow-direct-references = true
