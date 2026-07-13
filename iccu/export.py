@@ -100,12 +100,20 @@ def run(region: str = ALL_REGION, overwrite: bool = False, fmt: str = "both", co
     features = list(_df_to_features(df))
 
     if fmt in ("geojson", "both"):
-        n = write_geojson(features, dataset_geojson(label), _translate, _GEOJSON_SCHEMA)
-        print(f"Written: {dataset_geojson(label)} ({n} features)")
+        gj = dataset_geojson(label)
+        if overwrite or not gj.exists():
+            n = write_geojson(features, gj, _translate, _GEOJSON_SCHEMA)
+            print(f"Written: {gj} ({n} features)")
+        else:
+            print(f"Skipped (exists): {gj}")
     if fmt in ("osm", "both"):
         p = dataset_osm(label, compress)
-        n = write_osm(features, p, _translate)
-        print(f"Written: {p} ({n} nodes)")
+        if overwrite or not p.exists():
+            p.unlink(missing_ok=True)  # osmium refuses to open an existing file
+            n = write_osm(features, p, _translate)
+            print(f"Written: {p} ({n} nodes)")
+        else:
+            print(f"Skipped (exists): {p}")
 
 
 def _extra_args(p) -> None:
