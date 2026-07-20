@@ -1,6 +1,7 @@
 """OSM and GeoJSON writer utilities."""
 
 import re
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from itertools import count
 from pathlib import Path
@@ -38,13 +39,16 @@ def _translated(src, translate_fn: Callable):
         yield geom, tags
 
 
-def _add_ring(coords: list, node_ids: Iterator[int], writer: osmium.SimpleWriter) -> list[int]:
+def _add_ring(coords: list, coord_map: defaultdict, writer: osmium.SimpleWriter) -> list[int]:
     ring = coords[:-1] if len(coords) > 1 and coords[0] == coords[-1] else coords
     ids: list[int] = []
     for coord in ring:
         lon, lat = coord[0], coord[1]  # ignore Z if present
-        nid = next(node_ids)
-        writer.add_node(osmium.osm.mutable.Node(id=nid, location=osmium.osm.Location(lon, lat)))
+        key = (lon, lat)
+        is_new = key not in coord_map
+        nid = coord_map[key]
+        if is_new:
+            writer.add_node(osmium.osm.mutable.Node(id=nid, location=osmium.osm.Location(lon, lat)))
         ids.append(nid)
     return ids
 
@@ -55,12 +59,12 @@ def _add_way(ring_ids: list[int], tags: dict, way_ids: Iterator[int]) -> osmium.
 
 def _add_area(
     coords: list,
-    node_ids: Iterator[int],
+    coord_map: defaultdict,
     way_ids: Iterator[int],
     writer: osmium.SimpleWriter,
     tags: dict | None = None,
 ) -> osmium.osm.mutable.Way | None:
-    ring_ids = _add_ring(coords, node_ids, writer)
+    ring_ids = _add_ring(coords, coord_map, writer)
     if not ring_ids:
         return None
     return _add_way(ring_ids, tags or {}, way_ids)
@@ -69,7 +73,7 @@ def _add_area(
 def _add_area_relation(
     geom: dict,
     tags: dict,
-    node_ids: Iterator[int],
+    coord_map: defaultdict,
     way_ids: Iterator[int],
     rel_ids: Iterator[int],
     writer: osmium.SimpleWriter,
@@ -77,13 +81,13 @@ def _add_area_relation(
     all_ways: list[osmium.osm.mutable.Way] = []
     members: list[tuple[str, int, str]] = []
     for poly_coords in geom["coordinates"]:
-        w = _add_area(poly_coords[0], node_ids, way_ids, writer)
+        w = _add_area(poly_coords[0], coord_map, way_ids, writer)
         if w is None:
             continue
         all_ways.append(w)
         members.append(("w", w.id, "outer"))
         for inner_coords in poly_coords[1:]:
-            w = _add_area(inner_coords, node_ids, way_ids, writer)
+            w = _add_area(inner_coords, coord_map, way_ids, writer)
             if w is None:
                 continue
             all_ways.append(w)
@@ -102,6 +106,7 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None) -> in
     node_ids = count(-1, -1)
     way_ids = count(-1, -1)
     rel_ids = count(-1, -1)
+    coord_map: defaultdict[tuple[float, float], int] = defaultdict(lambda: next(node_ids))
 
     h = osmium.io.Header()
     if bounds:
@@ -119,12 +124,12 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None) -> in
                 nid = next(node_ids)
                 writer.add_node(osmium.osm.mutable.Node(id=nid, location=osmium.osm.Location(lon, lat), tags=tags))
             elif geom["type"] == "Polygon":
-                w = _add_area(geom["coordinates"][0], node_ids, way_ids, writer, tags=tags)
+                w = _add_area(geom["coordinates"][0], coord_map, way_ids, writer, tags=tags)
                 if w is None:
                     continue
                 ways.append(w)
             elif geom["type"] == "MultiPolygon":
-                result = _add_area_relation(geom, tags, node_ids, way_ids, rel_ids, writer)
+                result = _add_area_relation(geom, tags, coord_map, way_ids, rel_ids, writer)
                 if result is None:
                     continue
                 ws, r = result
