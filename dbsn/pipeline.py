@@ -1,8 +1,9 @@
-"""Run all pipeline steps in sequence: discover → download → extract → convert → validate."""
+"""Run all pipeline steps in sequence: discover → neighbours → download → extract → convert → validate."""
 
 import sys
 
 from dbsn import convert, discover, download, extract, validate
+from dbsn import neighbours as neighbours_mod
 from dbsn.common import SOURCES_JSON, filter_provinces, parse_args
 from dbsn.common import read_sources as _read_sources
 
@@ -10,11 +11,13 @@ from dbsn.common import read_sources as _read_sources
 def _extra_args(p) -> None:
     convert._extra_args(p)
     validate._extra_args(p)
+    p.add_argument("--neighbours", action="store_true", help="Force re-run of neighbours step")
+    p.add_argument("--no-extend", action="store_true", help="Skip extension phase (no ext files)")
 
 
 def main() -> None:
     args = parse_args(
-        "Run all DBSN pipeline steps: discover → download → extract → convert → validate",
+        "Run all DBSN pipeline steps: discover → neighbours → download → extract → convert → validate",
         resolve_provinces=False,
         setup=_extra_args,
     )
@@ -26,8 +29,19 @@ def main() -> None:
     provinces = filter_provinces(sources, args.province)
     if not provinces:
         sys.exit(f"No province matched '{args.province}'")
+
+    all_have_neighbours = all("neighbours" in p for p in provinces)
+    if args.neighbours or not all_have_neighbours:
+        print("=== Step 1: Neighbours ===")
+        all_sources = _read_sources()
+        neighbours_mod.run(all_sources, provinces, overwrite=args.neighbours)
+        sources = _read_sources()
+        provinces = filter_provinces(sources, args.province)
+    else:
+        print("=== Step 1: Neighbours (skipped — all selected provinces have neighbours key) ===")
+
     download.run(provinces, args.overwrite)
-    extract.run(provinces, args.overwrite)
+    extract.run(provinces, args.overwrite, extend=not args.no_extend)
     if args.compress and args.format == "geojson":
         sys.exit("error: --compress only applies to --format osm")
     convert.run(provinces, args.overwrite, args.format, args.compress)

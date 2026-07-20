@@ -3,11 +3,14 @@
 import argparse
 import csv
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 import httpx
+
+DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data" / "dbsn"
@@ -54,32 +57,40 @@ class Province(TypedDict):
     province: str
     code: str
     zip_name: str
-    url: str
-    fallback_url: str
+    igm_url: str
+    wmit_url: str
     date: str
     tsv_date: str
     status: str
     zip_size: int | None
+    neighbours: NotRequired[list[str]]
+
+
+def max_date() -> str:
+    return max(p["date"] for p in read_sources())
 
 
 def read_sources() -> list[Province]:
     if SOURCES_JSON.exists():
         data = json.loads(SOURCES_JSON.read_text(encoding="utf-8"))
-        return [
-            Province(
+        result = []
+        for code, v in data.items():
+            p: Province = Province(
                 code=code,
                 zip_name=f"{code}_{v['date']}.zip",
                 province=v.get("province", ""),
                 region=v.get("region", ""),
                 date=v["date"],
-                url=v["url"],
-                fallback_url=v.get("fallback_url", v["url"]),
+                igm_url=v["igm_url"],
+                wmit_url=v.get("wmit_url", v["igm_url"]),
                 tsv_date=v.get("tsv_date", v["date"]),
                 status=v.get("status", "ok"),
                 zip_size=v.get("zip_size"),
             )
-            for code, v in data.items()
-        ]
+            if "neighbours" in v:
+                p["neighbours"] = v["neighbours"]
+            result.append(p)
+        return result
 
     if TSV_CACHE.exists():
         return _parse_tsv(TSV_CACHE)
@@ -114,16 +125,16 @@ def _parse_tsv(path: Path) -> list[Province]:
             code = row["file"][:2].upper()
             date = row["date"].strip()
             url_igm = row["url_igm"].strip()
-            url_wmit = row["url_wmit"].strip()
-            fallback = url_wmit if url_wmit not in ("TODO", "") else url_igm
+            raw_wmit = row["url_wmit"].strip()
+            url_wmit = raw_wmit if raw_wmit not in ("TODO", "") else url_igm
             provinces.append(
                 Province(
                     region=row["region"].strip(),
                     province=row["province"].strip(),
                     code=code,
                     zip_name=f"{code}_{date}.zip",
-                    url=url_igm,
-                    fallback_url=fallback,
+                    igm_url=url_igm,
+                    wmit_url=url_wmit,
                     date=date,
                     tsv_date=date,
                     status="ok",
@@ -175,3 +186,7 @@ def parse_args(
         if not args.provinces:
             parser.error(f"No province matched '{args.province}'")
     return args
+
+
+def _max_date_main() -> None:
+    print(max_date())

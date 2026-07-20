@@ -13,6 +13,11 @@ on:
         type: boolean
         required: false
         default: false
+      overwrite:
+        description: 'Reprocess and re-upload already released files'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -51,7 +56,7 @@ jobs:
 
       - name: Compute release tag
         run: |
-          DATE=$(python -c "import json; d=json.load(open('data/dbsn/sources.json')); print(max(v['date'] for v in d.values()))")
+          DATE=$(uv run dbsn-max-date)
           echo "DBSN_TAG=dbsn-${DATE}" >> $GITHUB_ENV
           echo "DBSN_DATE=${DATE}" >> $GITHUB_ENV
 
@@ -66,16 +71,25 @@ jobs:
               --latest=false
           fi
 
+      - name: Restore ext FGB cache
+        uses: actions/cache/restore@v6
+        with:
+          path: data/dbsn/buildings
+          key: dbsn-ext-${{ github.run_id }}
+          restore-keys: dbsn-ext-
+
       - name: Restore data from release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data/dbsn/zips data/dbsn/buildings data/dbsn/osm
-          for code in $(uv run dbsn-list-codes --province "$PROVINCE"); do
-            gh release download "$DBSN_TAG" --dir data/dbsn/zips     --pattern "${code}_*.zip" || true
-            gh release download "$DBSN_TAG" --dir data/dbsn/buildings --pattern "${code}_*.fgb" || true
-            gh release download "$DBSN_TAG" --dir data/dbsn/osm      --pattern "${code}_*.osm.bz2" || true
-          done
+          if [[ "${{ inputs.overwrite }}" != "true" ]]; then
+            for code in $(uv run dbsn-list-codes --province "$PROVINCE"); do
+              gh release download "$DBSN_TAG" --dir data/dbsn/zips      --pattern "${code}_*.zip"     || true
+              gh release download "$DBSN_TAG" --dir data/dbsn/buildings --pattern "${code}_*.fgb"     || true
+              gh release download "$DBSN_TAG" --dir data/dbsn/osm       --pattern "${code}_*.osm.bz2" || true
+            done
+          fi
 
       - name: Run download
         run: uv run dbsn-download --province "$PROVINCE"
@@ -110,18 +124,26 @@ jobs:
           for code in $(uv run dbsn-list-codes --province "$PROVINCE"); do
             shopt -s nullglob
             osm_files=(data/dbsn/osm/${code}_*.osm.bz2)
-            fgb_files=(data/dbsn/buildings/${code}_*.fgb)
+            # Exclude ext FGBs (pattern: CODE_CODE_date_date.fgb); raw FGBs only
+            raw_fgb_files=()
+            for f in data/dbsn/buildings/${code}_*.fgb; do
+              [[ $(basename "$f") =~ ^[A-Z]{2}_[A-Z]{2}_ ]] || raw_fgb_files+=("$f")
+            done
             zip_files=(data/dbsn/zips/${code}_*.zip)
 
             if [[ ${#osm_files[@]} -gt 0 ]]; then
               gh release upload "$DBSN_TAG" "${osm_files[@]}" --clobber
+              uploaded_names=()
+              for f in "${osm_files[@]}"; do uploaded_names+=("$(basename "$f")"); done
               for pat in "^${code}_.*[.]fgb$" "^${code}_.*[.]zip$" "^${code}_.*[.]osm$" "^${code}_.*[.]osm[.]bz2$"; do
                 while IFS= read -r old; do
-                  [[ -n "$old" ]] && gh release delete-asset "$DBSN_TAG" "$old" --yes || true
+                  [[ -z "$old" ]] && continue
+                  printf '%s\n' "${uploaded_names[@]}" | grep -qxF "$old" && continue
+                  gh release delete-asset "$DBSN_TAG" "$old" --yes || true
                 done < <(echo "$assets" | jq -r ".[] | select(test(\"$pat\"))")
               done
-            elif [[ ${#fgb_files[@]} -gt 0 ]]; then
-              gh release upload "$DBSN_TAG" "${fgb_files[@]}" --clobber
+            elif [[ ${#raw_fgb_files[@]} -gt 0 ]]; then
+              gh release upload "$DBSN_TAG" "${raw_fgb_files[@]}" --clobber
               while IFS= read -r old; do
                 [[ -n "$old" ]] && gh release delete-asset "$DBSN_TAG" "$old" --yes || true
               done < <(echo "$assets" | jq -r ".[] | select(test(\"^${code}_.*[.]zip$\"))")
@@ -129,3 +151,17 @@ jobs:
               gh release upload "$DBSN_TAG" "${zip_files[@]}" --clobber
             fi
           done
+
+      - name: Prune raw FGBs before caching
+        if: always()
+        run: |
+          find data/dbsn/buildings -maxdepth 1 -name '*.fgb' | while read -r f; do
+            [[ $(basename "$f") =~ ^[A-Z]{2}_[A-Z]{2}_ ]] || rm -f "$f"
+          done
+
+      - name: Save ext FGB cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: data/dbsn/buildings
+          key: dbsn-ext-${{ github.run_id }}

@@ -16,6 +16,7 @@ dependencies = [
     "osm-conflate @ git+https://github.com/McCio/osm_conflate@v1.6.2",
     "phonenumberslite>=9.0,<10",
     "tenacity>=9.0",
+    "shapely>=2.0",
 ]
 
 [project.scripts]
@@ -25,7 +26,9 @@ dbsn-extract     = "dbsn.extract:main"
 dbsn-convert     = "dbsn.convert:main"
 dbsn-validate    = "dbsn.validate:main"
 dbsn-all         = "dbsn.pipeline:main"
+dbsn-neighbours  = "dbsn.neighbours:main"
 dbsn-list-codes  = "dbsn.list_codes:main"
+dbsn-max-date    = "dbsn.common:_max_date_main"
 iccu-download    = "iccu.download:main"
 iccu-clean       = "iccu.clean:main"
 iccu-export      = "iccu.export:main"

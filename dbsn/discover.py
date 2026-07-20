@@ -1,4 +1,4 @@
-"""Step 0: Discover latest DBSN download links from IGM, dsantini CDN, and Danysan1 TSV."""
+"""Step 0: Discover latest DBSN download links from IGM, wmit CDN, and Danysan1 TSV."""
 
 import argparse
 import csv
@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from dbsn.common import (
     DANYSAN1_TSV_URL,
     DATA_DIR,
+    DATE_RE,
     IGM_DOWNLOAD_URL,
     SOURCES_JSON,
     TSV_CACHE,
@@ -22,7 +23,7 @@ from dbsn.common import (
 
 # Province-level files: exactly 2 letters at start of filename segment, e.g. MI_dbsn_2025-07-28.zip
 # Region-level files (e.g. Marche_dbsn_...) and 3-letter codes (SMR) are intentionally excluded.
-_ZIP_RE = re.compile(r"(?:^|[/\\])([A-Z]{2})_dbsn_(\d{4}-\d{2}-\d{2})\.zip", re.IGNORECASE)
+_ZIP_RE = re.compile(rf"(?:^|[/\\])([A-Z]{{2}})_dbsn_({DATE_RE.pattern})\.zip", re.IGNORECASE)
 _IGM_BASE = "https://igmi.esercito.difesa.it"
 
 
@@ -67,7 +68,7 @@ def _fetch_tsv(overwrite: bool) -> dict[str, dict]:
                 "province": row["province"].strip(),
                 "date": row["date"].strip(),
                 "url_igm": row["url_igm"].strip(),
-                "url_wmit": row["url_wmit"].strip(),
+                "wmit_url": row["url_wmit"].strip(),
             }
     print(f"  [tsv] {len(result)} latest provinces")
     return result
@@ -87,7 +88,7 @@ def _scrape_igm(client: httpx.Client) -> dict[str, dict]:
             href = a["href"]
             url = href if href.startswith("http") else _IGM_BASE + href
             if code not in found or date_str > found[code]["date"]:
-                found[code] = {"date": date_str, "url": url}
+                found[code] = {"date": date_str, "igm_url": url}
         print(f"  [igm] {len(found)} provinces found on IGM download page")
     except Exception as exc:
         print(f"  [igm] scrape failed ({exc}), using TSV IGM URLs", file=sys.stderr)
@@ -106,9 +107,9 @@ def _merge(tsv: dict[str, dict], igm: dict[str, dict]) -> dict[str, dict]:
         igm_date = ig.get("date", "")
         best_date = max(tsv_date, igm_date)
 
-        primary_url = ig["url"] if (ig and igm_date == best_date) else t.get("url_igm", "")
-        url_wmit = t.get("url_wmit", "")
-        fallback_url = url_wmit if url_wmit not in ("TODO", "") else primary_url
+        igm_url = ig["igm_url"] if (ig and igm_date == best_date) else t.get("url_igm", "")
+        raw_wmit = t.get("wmit_url", "")
+        url_wmit = raw_wmit if raw_wmit not in ("TODO", "") else igm_url
 
         status = "missing_in_tsv" if code not in tsv else "newer_available" if best_date > tsv_date else "ok"
 
@@ -116,8 +117,8 @@ def _merge(tsv: dict[str, dict], igm: dict[str, dict]) -> dict[str, dict]:
             "province": t.get("province", ""),
             "region": t.get("region", ""),
             "date": best_date,
-            "url": primary_url,
-            "fallback_url": fallback_url,
+            "igm_url": igm_url,
+            "wmit_url": url_wmit,
             "tsv_date": tsv_date,
             "status": status,
         }
@@ -138,20 +139,20 @@ def _head_size(url: str, client: httpx.Client) -> int | None:
 def _fetch_sizes(sources: dict[str, dict], client: httpx.Client) -> None:
     mismatches: list[str] = []
     for code, entry in sources.items():
-        primary = entry["url"]
-        fallback = entry.get("fallback_url", "")
-        unique_urls = list(dict.fromkeys(u for u in [primary, fallback] if u))
+        igm = entry["igm_url"]
+        wmit = entry.get("wmit_url", "")
+        unique_urls = list(dict.fromkeys(u for u in [igm, wmit] if u))
 
         sizes = {url: _head_size(url, client) for url in unique_urls}
-        entry["zip_size"] = sizes.get(primary) or next((s for s in sizes.values() if s), None)
+        entry["zip_size"] = sizes.get(igm) or next((s for s in sizes.values() if s), None)
 
-        if fallback and fallback != primary:
-            ps, fs = sizes.get(primary), sizes.get(fallback)
+        if wmit and wmit != igm:
+            ps, fs = sizes.get(igm), sizes.get(wmit)
             if ps and fs and ps != fs:
                 ratio = max(ps, fs) / min(ps, fs)
                 if ratio >= 2:
                     mismatches.append(
-                        f"  [warn ] {code}: primary {fmt_size(ps)} vs fallback {fmt_size(fs)}"
+                        f"  [warn ] {code}: IGM {fmt_size(ps)} vs wmit {fmt_size(fs)}"
                         + (" — consider swapping" if fs > ps else "")
                     )
 

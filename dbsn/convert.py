@@ -4,11 +4,35 @@ import sys
 
 import fiona
 
-from dbsn.common import BUILDINGS_DIR, OSM_DIR, Province, parse_args, rel
+from dbsn.common import BUILDINGS_DIR, OSM_DIR, Province, parse_args, read_sources, rel
 from dbsn.translate import TAG_KEYS, translate
 from utils.writers import write_geojson, write_osm
 
 _GEOJSON_SCHEMA = {"geometry": "Unknown", "properties": dict.fromkeys(TAG_KEYS, "str")}
+
+
+def _build_override_map(p: Province, sources_by_code: dict[str, Province]) -> dict[str, dict]:
+    """Scan BUILDINGS_DIR for ext files applicable to province p; return classid→geom map."""
+    override_map: dict[str, dict] = {}
+    for ext_path in BUILDINGS_DIR.glob("*.fgb"):
+        parts = ext_path.stem.split("_")
+        # Ext stem: {C1}_{C2}_{C1date}_{C2date} — exactly 4 parts, first two are 2-letter alpha codes
+        if len(parts) != 4:
+            continue
+        c1, c2, d1, d2 = parts
+        if not (len(c1) == 2 and c1.isalpha() and len(c2) == 2 and c2.isalpha()):
+            continue
+        if not (
+            (c1 == p["code"] and d1 == p["date"] and sources_by_code.get(c2, {}).get("date") == d2)
+            or (c2 == p["code"] and d2 == p["date"] and sources_by_code.get(c1, {}).get("date") == d1)
+        ):
+            continue
+        with fiona.open(str(ext_path)) as src:
+            for feat in src:
+                cid = feat["properties"].get("classid")
+                if cid:
+                    override_map[cid] = dict(feat["geometry"])
+    return override_map
 
 
 def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: bool = False) -> bool | None:
@@ -33,11 +57,16 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
     if out_path.exists():
         out_path.unlink()
 
+    sources_by_code = {s["code"]: s for s in read_sources()}
+    override_map = _build_override_map(p, sources_by_code)
+    if override_map:
+        print(f"  [override] {p['code']} {p['province']}: {len(override_map)} cross-boundary buildings from ext files")
+
     print(f"  [convert] {p['code']} {p['province']}: {rel(in_fgb)} → {rel(out_path)}")
     try:
         with fiona.open(str(in_fgb)) as src:
             if fmt == "geojson":
-                count_written = write_geojson(src, out_path, translate, _GEOJSON_SCHEMA)
+                count_written = write_geojson(src, out_path, translate, _GEOJSON_SCHEMA, overrides=override_map or None)
             else:
                 try:
                     bounds = src.bounds
@@ -47,7 +76,7 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
                         file=sys.stderr,
                     )
                     bounds = None
-                count_written = write_osm(src, out_path, translate, bounds)
+                count_written = write_osm(src, out_path, translate, bounds, overrides=override_map or None)
         size = out_path.stat().st_size // 1024
         print(f"  [done   ] {p['code']} {p['province']}: {rel(out_path)} ({count_written} features, {size}KB)")
         return True
