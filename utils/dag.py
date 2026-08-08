@@ -24,6 +24,13 @@ class Task(ABC):
     @abstractmethod
     def name(self) -> str: ...
 
+    @property
+    def label(self) -> str:
+        return self.name.split(":")[0]
+
+    def log_cached(self) -> None:
+        print(f"  [{self.label}] {self.name}: cached")
+
     def skip_if(self) -> bool:
         """Return True to skip run() and use the cached result."""
         return False
@@ -119,6 +126,7 @@ class Pipeline:
             t0 = time.monotonic()
             try:
                 if task.skip_if():
+                    task.log_cached()
                     _callback(name, 0, Result(name, "skipped", time.monotonic() - t0))
                     return
             except Exception as e:

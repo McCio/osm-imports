@@ -295,6 +295,13 @@ class ExtractRawTask(Task):
     def name(self) -> str:
         return f"extract-raw:{self._prov['code']}"
 
+    @property
+    def label(self) -> str:
+        return "extract"
+
+    def log_cached(self) -> None:
+        print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
+
     def dependencies(self) -> list[Task]:
         return [DownloadTask(self._prov, self._overwrite_steps)]
 
@@ -321,6 +328,9 @@ class ExtendTask(Task):
     @property
     def name(self) -> str:
         return f"extend:{self._p1['code']}:{self._p2['code']}"
+
+    def log_cached(self) -> None:
+        print(f"  [{self.label}] {self._p1['code']}↔{self._p2['code']}: cached")
 
     def dependencies(self) -> list[Task]:
         return [

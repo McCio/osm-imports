@@ -123,6 +123,9 @@ class ConvertTask(Task):
     def name(self) -> str:
         return f"convert:{self._prov['code']}"
 
+    def log_cached(self) -> None:
+        print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
+
     def dependencies(self) -> list[Task]:
         deps: list[Task] = [ExtractRawTask(self._prov, self._overwrite_steps)]
         if self._extend:

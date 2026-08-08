@@ -58,6 +58,9 @@ class ValidateTask(Task):
     def name(self) -> str:
         return f"validate:{self._prov['code']}"
 
+    def log_cached(self) -> None:
+        print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
+
     def dependencies(self) -> list[Task]:
         return [ConvertTask(self._prov, self._sources, self._overwrite_steps, self._fmt, self._compress, self._extend)]
 

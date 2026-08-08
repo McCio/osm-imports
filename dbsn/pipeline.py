@@ -27,10 +27,8 @@ def main() -> None:
     overwrite_steps = parse_overwrite(args.overwrite)
 
     # Step 0: Discover
-    if overwrite_steps or not SOURCES_JSON.exists() or args.province.lower() == "all":
-        discover.run(bool(overwrite_steps))
-    else:
-        print("=== Step 0: Discover (skipped — sources.json exists, province filtered) ===")
+    if "discover" in overwrite_steps or not SOURCES_JSON.exists() or args.province.lower() == "all":
+        discover.run("discover" in overwrite_steps)
 
     sources = read_sources()
     provinces = filter_provinces(sources, args.province)
@@ -39,11 +37,9 @@ def main() -> None:
 
     # Step 1: Neighbours — run before DAG build so dependency edges are known
     all_have_neighbours = all("neighbours" in p for p in provinces)
-    if args.neighbours or not all_have_neighbours:
+    if "neighbours" in overwrite_steps or args.neighbours or not all_have_neighbours:
         print("=== Step 1: Neighbours ===")
-        neighbours_mod.run(read_sources(), provinces, overwrite=args.neighbours)
-    else:
-        print("=== Step 1: Neighbours (skipped — all selected provinces have neighbours key) ===")
+        neighbours_mod.run(read_sources(), provinces, overwrite="neighbours" in overwrite_steps or args.neighbours)
 
     all_sources = read_sources()
     provinces = filter_provinces(all_sources, args.province)
