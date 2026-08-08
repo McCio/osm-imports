@@ -4,7 +4,7 @@ import sys
 
 from dbsn import convert, discover, validate
 from dbsn import neighbours as neighbours_mod
-from dbsn.common import SOURCES_JSON, add_max_weight_arg, filter_provinces, parse_args, read_sources
+from dbsn.common import SOURCES_JSON, add_max_weight_arg, filter_provinces, parse_args, parse_overwrite, read_sources
 from dbsn.validate import ValidateTask
 from utils.dag import run_dag
 
@@ -24,9 +24,11 @@ def main() -> None:
         setup=_extra_args,
     )
 
+    overwrite_steps = parse_overwrite(args.overwrite)
+
     # Step 0: Discover
-    if args.overwrite or not SOURCES_JSON.exists() or args.province.lower() == "all":
-        discover.run(args.overwrite)
+    if overwrite_steps or not SOURCES_JSON.exists() or args.province.lower() == "all":
+        discover.run(bool(overwrite_steps))
     else:
         print("=== Step 0: Discover (skipped — sources.json exists, province filtered) ===")
 
@@ -53,7 +55,7 @@ def main() -> None:
             prov,
             sources_by_code,
             delete_invalid=args.delete_invalid,
-            overwrite=args.overwrite,
+            overwrite_steps=overwrite_steps,
             fmt=args.format,
             compress=args.compress,
             extend=not args.no_extend,

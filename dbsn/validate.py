@@ -41,7 +41,7 @@ class ValidateTask(Task):
         prov: Province,
         sources_by_code: dict[str, Province],
         delete_invalid: bool = False,
-        overwrite: bool = False,
+        overwrite_steps: frozenset[str] = frozenset(),
         fmt: str = "osm",
         compress: bool = True,
         extend: bool = True,
@@ -49,7 +49,7 @@ class ValidateTask(Task):
         self._prov = prov
         self._sources = sources_by_code
         self._delete_invalid = delete_invalid
-        self._overwrite = overwrite
+        self._overwrite_steps = overwrite_steps
         self._fmt = fmt
         self._compress = compress
         self._extend = extend
@@ -59,7 +59,7 @@ class ValidateTask(Task):
         return f"validate:{self._prov['code']}"
 
     def dependencies(self) -> list[Task]:
-        return [ConvertTask(self._prov, self._sources, self._overwrite, self._fmt, self._compress, self._extend)]
+        return [ConvertTask(self._prov, self._sources, self._overwrite_steps, self._fmt, self._compress, self._extend)]
 
     def skip_if(self) -> bool:
         return not bool(_osm_files(self._prov))

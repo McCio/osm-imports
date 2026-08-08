@@ -22,6 +22,7 @@ from dbsn.common import (
     add_max_weight_arg,
     http_client,
     parse_args,
+    parse_overwrite,
     read_sources,
     rel,
 )
@@ -286,36 +287,36 @@ def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
 
 
 class ExtractRawTask(Task):
-    def __init__(self, prov: Province, overwrite: bool = False) -> None:
+    def __init__(self, prov: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         self._prov = prov
-        self._overwrite = overwrite
+        self._overwrite_steps = overwrite_steps
 
     @property
     def name(self) -> str:
         return f"extract-raw:{self._prov['code']}"
 
     def dependencies(self) -> list[Task]:
-        return [DownloadTask(self._prov, overwrite=False)]
+        return [DownloadTask(self._prov, self._overwrite_steps)]
 
     def skip_if(self) -> bool:
-        if self._overwrite:
+        if "extract" in self._overwrite_steps:
             return False
         p = self._prov
         return (BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb").exists()
 
     def run(self) -> None:
-        result = _extract_province(self._prov, overwrite=self._overwrite, extend=False)
+        result = _extract_province(self._prov, overwrite="extract" in self._overwrite_steps, extend=False)
         if result is False:
             raise RuntimeError(f"extract failed: {self._prov['code']} {self._prov['province']}")
 
 
 class ExtendTask(Task):
-    def __init__(self, p1: Province, p2: Province, overwrite: bool = False) -> None:
+    def __init__(self, p1: Province, p2: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         if p1["code"] > p2["code"]:
             p1, p2 = p2, p1
         self._p1 = p1
         self._p2 = p2
-        self._overwrite = overwrite
+        self._overwrite_steps = overwrite_steps
 
     @property
     def name(self) -> str:
@@ -323,19 +324,19 @@ class ExtendTask(Task):
 
     def dependencies(self) -> list[Task]:
         return [
-            ExtractRawTask(self._p1, self._overwrite),
-            ExtractRawTask(self._p2, self._overwrite),
+            ExtractRawTask(self._p1, self._overwrite_steps),
+            ExtractRawTask(self._p2, self._overwrite_steps),
         ]
 
     def skip_if(self) -> bool:
-        if self._overwrite:
+        if "extend" in self._overwrite_steps:
             return False
         c1, c2 = self._p1["code"], self._p2["code"]
         d1, d2 = self._p1["date"], self._p2["date"]
         return (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}.fgb").exists()
 
     def run(self) -> None:
-        extend_pair(self._p1, self._p2, overwrite=self._overwrite)
+        extend_pair(self._p1, self._p2, overwrite="extend" in self._overwrite_steps)
 
 
 def run(provinces: list[Province], overwrite: bool, extend: bool = True) -> None:
@@ -364,16 +365,17 @@ def main() -> None:
         add_max_weight_arg(parser)
 
     args = parse_args("Step 2: extract buildings layer from GDB to FlatGeobuf", setup=_setup)
+    overwrite_steps = parse_overwrite(args.overwrite)
     sources_by_code = {p["code"]: p for p in read_sources()}
 
     tasks: list[Task] = []
     for prov in args.provinces:
-        tasks.append(ExtractRawTask(prov, args.overwrite))
+        tasks.append(ExtractRawTask(prov, overwrite_steps))
         if not args.no_extend:
             for nb_code in prov.get("neighbours", []):
                 nb = sources_by_code.get(nb_code)
                 if nb:
-                    tasks.append(ExtendTask(prov, nb, args.overwrite))
+                    tasks.append(ExtendTask(prov, nb, overwrite_steps))
 
     run_dag(tasks, args.max_weight)
 

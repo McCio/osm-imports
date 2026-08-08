@@ -23,6 +23,7 @@ BUILDINGS_DIR = DATA_DIR / "buildings"
 OSM_DIR = DATA_DIR / "osm"
 
 EXCLUDE_META_IST: frozenset[str] = frozenset(("03", "21", "23"))
+OVERWRITE_STEPS: tuple[str, ...] = ("download", "extract", "extend", "convert", "validate")
 
 IGM_DOWNLOAD_URL = (
     "https://igmi.esercito.difesa.it/servizi/database-di-sintesi-nazionale/database-di-sintesi-nazionale-download/"
@@ -162,6 +163,21 @@ def filter_provinces(provinces: list[Province], selector: str) -> list[Province]
     return result
 
 
+def parse_overwrite(raw: list[str] | None) -> frozenset[str]:
+    """Normalise --overwrite values (CSV, repeated, bare/all) → frozenset of step names."""
+    if raw is None:
+        return frozenset()
+    steps: set[str] = set()
+    for item in raw:
+        for step in item.split(","):
+            step = step.strip()
+            if step == "all":
+                return frozenset(OVERWRITE_STEPS)
+            if step:
+                steps.add(step)
+    return frozenset(steps)
+
+
 def parse_args(
     description: str,
     *,
@@ -178,7 +194,14 @@ def parse_args(
         help="Comma-separated province codes, province names, region names, or 'all'",
     )
     if overwrite:
-        parser.add_argument("--overwrite", action="store_true", help="Re-process existing output files")
+        parser.add_argument(
+            "--overwrite",
+            action="append",
+            nargs="?",
+            const="all",
+            metavar="STEP[,STEP...]",
+            help=f"Steps to re-process ({', '.join(OVERWRITE_STEPS)}) or 'all'; bare --overwrite = all",
+        )
     if setup:
         setup(parser)
     args = parser.parse_args()

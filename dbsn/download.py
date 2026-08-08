@@ -13,6 +13,7 @@ from dbsn.common import (
     add_max_weight_arg,
     http_client,
     parse_args,
+    parse_overwrite,
     read_sources,
     rel,
 )
@@ -81,16 +82,16 @@ def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bo
 
 
 class DownloadTask(Task):
-    def __init__(self, prov: Province, overwrite: bool = False) -> None:
+    def __init__(self, prov: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         self._prov = prov
-        self._overwrite = overwrite
+        self._overwrite_steps = overwrite_steps
 
     @property
     def name(self) -> str:
         return f"download:{self._prov['code']}"
 
     def skip_if(self) -> bool:
-        if self._overwrite:
+        if "download" in self._overwrite_steps:
             return False
         p = self._prov
         return (
@@ -102,7 +103,7 @@ class DownloadTask(Task):
 
     def run(self) -> None:
         with http_client() as client:
-            ok = _download_province(client, self._prov, self._overwrite)
+            ok = _download_province(client, self._prov, "download" in self._overwrite_steps)
         if not ok:
             raise RuntimeError(f"download failed: {self._prov['code']} {self._prov['province']}")
 
@@ -146,16 +147,17 @@ def main() -> None:
         add_max_weight_arg(parser)
 
     args = parse_args("Step 1: download province ZIP archives", setup=_setup)
+    overwrite_steps = parse_overwrite(args.overwrite)
     sources_by_code = {p["code"]: p for p in read_sources()}
 
     tasks: list[DownloadTask] = []
     for prov in args.provinces:
-        tasks.append(DownloadTask(prov, args.overwrite))
+        tasks.append(DownloadTask(prov, overwrite_steps))
         if not args.no_neighbours:
             for nb_code in prov.get("neighbours", []):
                 nb = sources_by_code.get(nb_code)
                 if nb:
-                    tasks.append(DownloadTask(nb, overwrite=False))
+                    tasks.append(DownloadTask(nb))
 
     run_dag(tasks, args.max_weight)
 
