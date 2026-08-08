@@ -27,7 +27,7 @@ def main() -> None:
     overwrite_steps = parse_overwrite(args.overwrite)
 
     # Step 0: Discover
-    if "discover" in overwrite_steps or not SOURCES_JSON.exists() or args.province.lower() == "all":
+    if "discover" in overwrite_steps or not SOURCES_JSON.exists():
         discover.run("discover" in overwrite_steps)
 
     sources = read_sources()
