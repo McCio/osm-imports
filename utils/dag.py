@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import graphlib
+import multiprocessing.pool
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -15,10 +16,12 @@ class Task(ABC):
     """Base class for a single unit of pipeline work.
 
     Subclasses must implement ``name`` and ``run()``.
-    Override ``weight`` (class attribute), ``skip_if()``, and ``dependencies()`` as needed.
+    Override ``weight`` (class attribute), ``run_in_process``, ``skip_if()``,
+    and ``dependencies()`` as needed.
     """
 
     weight: int = 1
+    run_in_process: bool = False
 
     @property
     @abstractmethod
@@ -86,6 +89,7 @@ class Pipeline:
     def run(self, max_weight: int = 4) -> dict[str, Result]:
         """Execute all registered tasks respecting dependencies and weight budget.
 
+        Tasks with run_in_process=True execute in worker processes (bypasses GIL).
         Skipped tasks (skip_if() == True) bypass the semaphore entirely.
         Raises the first exception encountered; in-flight tasks are allowed to finish.
         """
@@ -105,9 +109,14 @@ class Pipeline:
         sem = _WeightSemaphore(max_weight)
         results: dict[str, Result] = {}
         errors: list[BaseException] = []
+        stop = threading.Event()
 
-        # pool is assigned before any _execute call, so the closure reference is safe.
-        pool: ThreadPoolExecutor
+        use_procs = any(t.run_in_process for t in self._tasks.values())
+        mp_pool: multiprocessing.pool.Pool | None = (
+            multiprocessing.pool.Pool(processes=max_weight) if use_procs else None
+        )
+
+        pool = ThreadPoolExecutor(max_workers=min(len(self._tasks), max(max_weight * 4, 16)))
 
         def _callback(name: str, weight: int, result: Result) -> None:
             with dag_lock:
@@ -135,19 +144,44 @@ class Pipeline:
 
             sem.acquire(task.weight)
             try:
-                task.run()
+                if task.run_in_process and mp_pool is not None:
+                    # Poll with timeout so the thread can notice a stop signal quickly.
+                    async_result = mp_pool.apply_async(task.run)
+                    while True:
+                        try:
+                            async_result.get(timeout=0.1)
+                            break
+                        except multiprocessing.TimeoutError:
+                            if stop.is_set():
+                                raise RuntimeError("pipeline aborted")
+                else:
+                    task.run()
                 _callback(name, task.weight, Result(name, "done", time.monotonic() - t0))
             except BaseException as e:
                 _callback(name, task.weight, Result(name, "failed", time.monotonic() - t0, e))
             finally:
                 sem.release(task.weight)
 
-        max_workers = min(len(self._tasks), max(max_weight * 4, 16))
-        with ThreadPoolExecutor(max_workers=max_workers) as pool, dag_lock:
-            for name in ts.get_ready():
-                pool.submit(_execute, name)
-            while ts.is_active() and not errors:
-                dag_lock.wait()
+        try:
+            with dag_lock:
+                for name in ts.get_ready():
+                    pool.submit(_execute, name)
+                while ts.is_active() and not errors:
+                    dag_lock.wait()
+        except KeyboardInterrupt:
+            stop.set()
+            if mp_pool is not None:
+                mp_pool.terminate()
+            pool.shutdown(cancel_futures=True, wait=True)
+            if mp_pool is not None:
+                mp_pool.join()
+                mp_pool = None
+            raise
+        else:
+            pool.shutdown(wait=True)
+            if mp_pool is not None:
+                mp_pool.close()
+                mp_pool.join()
 
         if errors:
             raise errors[0]

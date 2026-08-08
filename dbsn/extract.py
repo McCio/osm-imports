@@ -287,6 +287,8 @@ def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
 
 
 class ExtractRawTask(Task):
+    run_in_process = True
+
     def __init__(self, prov: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         self._prov = prov
         self._overwrite_steps = overwrite_steps
@@ -318,6 +320,8 @@ class ExtractRawTask(Task):
 
 
 class ExtendTask(Task):
+    run_in_process = True
+
     def __init__(self, p1: Province, p2: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         if p1["code"] > p2["code"]:
             p1, p2 = p2, p1

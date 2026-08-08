@@ -103,6 +103,8 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
 
 
 class ConvertTask(Task):
+    run_in_process = True
+
     def __init__(
         self,
         prov: Province,
