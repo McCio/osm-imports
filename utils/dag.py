@@ -20,7 +20,7 @@ class Task(ABC):
     and ``dependencies()`` as needed.
     """
 
-    weight: int = 1
+    weight: float = 1
     run_in_process: bool = False
 
     @property
@@ -56,18 +56,18 @@ class Result:
 class _WeightSemaphore:
     """Counting semaphore that limits total concurrent weight."""
 
-    def __init__(self, capacity: int) -> None:
+    def __init__(self, capacity: float) -> None:
         self._capacity = capacity
-        self._used = 0
+        self._used: float = 0.0
         self._cond = threading.Condition()
 
-    def acquire(self, weight: int) -> None:
+    def acquire(self, weight: float) -> None:
         with self._cond:
-            while self._used + weight > self._capacity:
+            while self._used > 0 and self._used + weight > self._capacity:
                 self._cond.wait()
             self._used += weight
 
-    def release(self, weight: int) -> None:
+    def release(self, weight: float) -> None:
         with self._cond:
             self._used -= weight
             self._cond.notify_all()
@@ -86,7 +86,7 @@ class Pipeline:
             self.add(dep)
         return self
 
-    def run(self, max_weight: int = 4) -> dict[str, Result]:
+    def run(self, max_weight: float = 4) -> dict[str, Result]:
         """Execute all registered tasks respecting dependencies and weight budget.
 
         Tasks with run_in_process=True execute in worker processes (bypasses GIL).
@@ -188,7 +188,7 @@ class Pipeline:
         return results
 
 
-def run_dag(root_tasks: list[Task], max_weight: int) -> dict[str, Result]:
+def run_dag(root_tasks: list[Task], max_weight: float) -> dict[str, Result]:
     """Build a pipeline from root tasks and run it, printing a summary."""
     pipeline = Pipeline()
     for task in root_tasks:
