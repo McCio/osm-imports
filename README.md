@@ -117,7 +117,18 @@ FlatGeobuf is written.
 `neighbours` is populated by `dbsn-neighbours` and committed. It lists the codes of all
 provinces that share a boundary, used by `extract` to locate cross-province buildings.
 
+### Per-region tag overrides
+
+`dbsn/translate.py` applies national tag mappings then optionally runs a per-region override (keyed by the `region` field in `sources.json`).  Add a function to `_REGION_OVERRIDES` to customise tagging for a specific region.
+
+Current overrides:
+
+| Region | Override |
+|---|---|
+| Umbria | `edifc_mon=01` → `historic=monument` + `fixme:building` |
+
 ### Based on
 
 - [Danysan1/dbsn-import](https://github.com/Danysan1/dbsn-import): province source list and download URLs
 - [musuruan/osm_imports](https://github.com/musuruan/osm_imports): DBSN tag translation (`edifici.py`)
+- [arcanma/Umbria_buildings_import](https://github.com/arcanma/Umbria_buildings_import): additional mappings and per-region override pattern
