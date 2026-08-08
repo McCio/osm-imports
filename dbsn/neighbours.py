@@ -263,6 +263,7 @@ def main() -> None:
     args = parse_args(
         "Determine province neighbours from OSM administrative boundaries",
         overwrite=True,
+        default_province="all",
         setup=_setup,
     )
     print(f"=== Neighbours ({len(args.provinces)} provinces) ===")

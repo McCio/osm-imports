@@ -189,15 +189,18 @@ def parse_args(
     *,
     overwrite: bool = True,
     resolve_provinces: bool = True,
+    default_province: str | None = None,
     setup: Callable[[argparse.ArgumentParser], None] | None = None,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument(
         "--province",
         "-p",
-        required=True,
+        required=default_province is None,
+        default=default_province,
         metavar="CODE|NAME|REGION[,...]|all",
-        help="Comma-separated province codes, province names, region names, or 'all'",
+        help="Comma-separated province codes, province names, region names, or 'all'"
+        + (f" (default: {default_province})" if default_province else ""),
     )
     if overwrite:
         parser.add_argument(
