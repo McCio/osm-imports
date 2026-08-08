@@ -144,17 +144,19 @@ def _fetch_sizes(sources: dict[str, dict], client: httpx.Client) -> None:
         unique_urls = list(dict.fromkeys(u for u in [igm, wmit] if u))
 
         sizes = {url: _head_size(url, client) for url in unique_urls}
-        entry["zip_size"] = sizes.get(igm) or next((s for s in sizes.values() if s), None)
+        igm_size = sizes.get(igm)
+        wmit_size = sizes.get(wmit) if (wmit and wmit != igm) else None
+        entry["igm_zip_size"] = igm_size
+        entry["wmit_zip_size"] = wmit_size
+        entry["zip_size"] = max(igm_size, wmit_size) if (igm_size and wmit_size) else (igm_size or wmit_size)
 
-        if wmit and wmit != igm:
-            ps, fs = sizes.get(igm), sizes.get(wmit)
-            if ps and fs and ps != fs:
-                ratio = max(ps, fs) / min(ps, fs)
-                if ratio >= 2:
-                    mismatches.append(
-                        f"  [warn ] {code}: IGM {fmt_size(ps)} vs wmit {fmt_size(fs)}"
-                        + (" — consider swapping" if fs > ps else "")
-                    )
+        if wmit_size and igm_size and igm_size != wmit_size:
+            ratio = max(igm_size, wmit_size) / min(igm_size, wmit_size)
+            if ratio >= 2:
+                bigger = "IGM" if igm_size > wmit_size else "wmit"
+                mismatches.append(
+                    f"  [warn ] {code}: IGM {fmt_size(igm_size)} vs wmit {fmt_size(wmit_size)} — will use {bigger}"
+                )
 
     found = sum(1 for v in sources.values() if v["zip_size"])
     print(f"  [size] {found}/{len(sources)} provinces with known ZIP size")

@@ -25,6 +25,20 @@ def _date_key(url: str) -> int:
     return int(m.group().replace("-", "")) if m else 0
 
 
+def _url_size(label: str, p: Province) -> int:
+    if label == "wmit":
+        return p.get("wmit_zip_size") or 0
+    return p.get("igm_zip_size") or 0
+
+
+def _zip_complete(zip_path, p: Province) -> bool:
+    """True if zip exists and matches expected size (or no size known)."""
+    if not zip_path.exists():
+        return False
+    expected = p.get("zip_size")
+    return expected is None or zip_path.stat().st_size == expected
+
+
 def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bool:
     ZIPS_DIR.mkdir(parents=True, exist_ok=True)
     zip_path = ZIPS_DIR / p["zip_name"]
@@ -39,15 +53,19 @@ def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bo
         if fgb_path.exists():
             print(f"  [skip ] {p['code']} {p['province']}: FGB already extracted (use --overwrite to reprocess)")
             return True
-        if zip_path.exists():
+        if _zip_complete(zip_path, p):
             size = zip_path.stat().st_size // (1024 * 1024)
             print(f"  [skip ] {p['code']} {p['province']}: {p['zip_name']} ({size}MB) (use --overwrite to reprocess)")
             return True
+        if zip_path.exists():
+            mb = zip_path.stat().st_size // (1024 * 1024)
+            print(f"  [redown] {p['code']} {p['province']}: incomplete zip ({mb}MB), re-downloading")
+            zip_path.unlink()
 
     candidates = [("IGM", p["igm_url"])]
     if p["wmit_url"] and p["wmit_url"] != p["igm_url"]:
         candidates.append(("wmit", p["wmit_url"]))
-    urls = sorted(candidates, key=lambda item: (-_date_key(item[1]), 0 if item[0] == "wmit" else 1))
+    urls = sorted(candidates, key=lambda item: (-_url_size(item[0], p), -_date_key(item[1])))
 
     for label, url in urls:
         print(f"  [down ] {p['code']} {p['province']} ({label}): {url}")
@@ -90,12 +108,15 @@ class DownloadTask(Task):
     def name(self) -> str:
         return f"download:{self._prov['code']}"
 
+    def log_cached(self) -> None:
+        print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
+
     def skip_if(self) -> bool:
         if "download" in self._overwrite_steps:
             return False
         p = self._prov
         return (
-            (ZIPS_DIR / p["zip_name"]).exists()
+            _zip_complete(ZIPS_DIR / p["zip_name"], p)
             or (BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb").exists()
             or (OSM_DIR / f"{p['code']}_{p['date']}.osm").exists()
             or (OSM_DIR / f"{p['code']}_{p['date']}.osm.bz2").exists()

@@ -23,7 +23,7 @@ BUILDINGS_DIR = DATA_DIR / "buildings"
 OSM_DIR = DATA_DIR / "osm"
 
 EXCLUDE_META_IST: frozenset[str] = frozenset(("03", "21", "23"))
-OVERWRITE_STEPS: tuple[str, ...] = ("download", "extract", "extend", "convert", "validate")
+OVERWRITE_STEPS: tuple[str, ...] = ("discover", "neighbours", "download", "extract", "extend", "convert", "validate")
 
 IGM_DOWNLOAD_URL = (
     "https://igmi.esercito.difesa.it/servizi/database-di-sintesi-nazionale/database-di-sintesi-nazionale-download/"
@@ -65,6 +65,8 @@ class Province(TypedDict):
     tsv_date: str
     status: str
     zip_size: int | None
+    igm_zip_size: NotRequired[int | None]
+    wmit_zip_size: NotRequired[int | None]
     neighbours: NotRequired[list[str]]
 
 
@@ -89,6 +91,10 @@ def read_sources() -> list[Province]:
                 status=v.get("status", "ok"),
                 zip_size=v.get("zip_size"),
             )
+            if "igm_zip_size" in v:
+                p["igm_zip_size"] = v["igm_zip_size"]
+            if "wmit_zip_size" in v:
+                p["wmit_zip_size"] = v["wmit_zip_size"]
             if "neighbours" in v:
                 p["neighbours"] = v["neighbours"]
             result.append(p)
