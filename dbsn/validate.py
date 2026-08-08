@@ -3,7 +3,9 @@
 import sys
 from pathlib import Path
 
-from dbsn.common import OSM_DIR, Province, parse_args, rel
+from dbsn.common import OSM_DIR, Province, add_max_weight_arg, parse_args, read_sources, rel
+from dbsn.convert import ConvertTask
+from utils.dag import Task, run_dag
 from utils.osm_validate import validate_file
 
 
@@ -31,6 +33,43 @@ def _validate_province(p: Province, delete_invalid: bool) -> bool | None:
     return ok
 
 
+class ValidateTask(Task):
+    weight = 2
+
+    def __init__(
+        self,
+        prov: Province,
+        sources_by_code: dict[str, Province],
+        delete_invalid: bool = False,
+        overwrite: bool = False,
+        fmt: str = "osm",
+        compress: bool = True,
+        extend: bool = True,
+    ) -> None:
+        self._prov = prov
+        self._sources = sources_by_code
+        self._delete_invalid = delete_invalid
+        self._overwrite = overwrite
+        self._fmt = fmt
+        self._compress = compress
+        self._extend = extend
+
+    @property
+    def name(self) -> str:
+        return f"validate:{self._prov['code']}"
+
+    def dependencies(self) -> list[Task]:
+        return [ConvertTask(self._prov, self._sources, self._overwrite, self._fmt, self._compress, self._extend)]
+
+    def skip_if(self) -> bool:
+        return not bool(_osm_files(self._prov))
+
+    def run(self) -> None:
+        result = _validate_province(self._prov, self._delete_invalid)
+        if result is False:
+            raise RuntimeError(f"validate failed: {self._prov['code']} {self._prov['province']}")
+
+
 def run(provinces: list[Province], delete_invalid: bool = False) -> None:
     print(f"=== Step 4: Validate ({len(provinces)} provinces) ===")
     ok = failed = missing = 0
@@ -52,8 +91,14 @@ def _extra_args(p) -> None:
 
 
 def main() -> None:
-    args = parse_args("Step 4: validate OSM files with osmium check-refs", overwrite=False, setup=_extra_args)
-    run(args.provinces, args.delete_invalid)
+    def _setup(parser) -> None:
+        _extra_args(parser)
+        add_max_weight_arg(parser)
+
+    args = parse_args("Step 4: validate OSM files with osmium check-refs", overwrite=False, setup=_setup)
+    sources_by_code = {p["code"]: p for p in read_sources()}
+    tasks = [ValidateTask(prov, sources_by_code, delete_invalid=args.delete_invalid) for prov in args.provinces]
+    run_dag(tasks, args.max_weight)
 
 
 if __name__ == "__main__":

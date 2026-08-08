@@ -10,11 +10,13 @@ from dbsn.common import (
     OSM_DIR,
     ZIPS_DIR,
     Province,
+    add_max_weight_arg,
     http_client,
     parse_args,
     read_sources,
     rel,
 )
+from utils.dag import Task, run_dag
 
 
 def _date_key(url: str) -> int:
@@ -78,6 +80,33 @@ def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bo
     return False
 
 
+class DownloadTask(Task):
+    def __init__(self, prov: Province, overwrite: bool = False) -> None:
+        self._prov = prov
+        self._overwrite = overwrite
+
+    @property
+    def name(self) -> str:
+        return f"download:{self._prov['code']}"
+
+    def skip_if(self) -> bool:
+        if self._overwrite:
+            return False
+        p = self._prov
+        return (
+            (ZIPS_DIR / p["zip_name"]).exists()
+            or (BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb").exists()
+            or (OSM_DIR / f"{p['code']}_{p['date']}.osm").exists()
+            or (OSM_DIR / f"{p['code']}_{p['date']}.osm.bz2").exists()
+        )
+
+    def run(self) -> None:
+        with http_client() as client:
+            ok = _download_province(client, self._prov, self._overwrite)
+        if not ok:
+            raise RuntimeError(f"download failed: {self._prov['code']} {self._prov['province']}")
+
+
 def run(provinces: list[Province], overwrite: bool, download_neighbours: bool = True) -> None:
     print(f"=== Step 1: Download ({len(provinces)} provinces) ===")
     ok = failed = 0
@@ -114,9 +143,21 @@ def run(provinces: list[Province], overwrite: bool, download_neighbours: bool = 
 def main() -> None:
     def _setup(parser) -> None:
         parser.add_argument("--no-neighbours", action="store_true", help="Skip pre-fetching neighbour ZIPs")
+        add_max_weight_arg(parser)
 
     args = parse_args("Step 1: download province ZIP archives", setup=_setup)
-    run(args.provinces, args.overwrite, download_neighbours=not args.no_neighbours)
+    sources_by_code = {p["code"]: p for p in read_sources()}
+
+    tasks: list[DownloadTask] = []
+    for prov in args.provinces:
+        tasks.append(DownloadTask(prov, args.overwrite))
+        if not args.no_neighbours:
+            for nb_code in prov.get("neighbours", []):
+                nb = sources_by_code.get(nb_code)
+                if nb:
+                    tasks.append(DownloadTask(nb, overwrite=False))
+
+    run_dag(tasks, args.max_weight)
 
 
 if __name__ == "__main__":

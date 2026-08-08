@@ -1,18 +1,20 @@
-"""Run all pipeline steps in sequence: discover → neighbours → download → extract → convert → validate."""
+"""Run all pipeline steps: discover → neighbours → [download/extract/extend/convert/validate] in parallel."""
 
 import sys
 
-from dbsn import convert, discover, download, extract, validate
+from dbsn import convert, discover, validate
 from dbsn import neighbours as neighbours_mod
-from dbsn.common import SOURCES_JSON, filter_provinces, parse_args
-from dbsn.common import read_sources as _read_sources
+from dbsn.common import SOURCES_JSON, add_max_weight_arg, filter_provinces, parse_args, read_sources
+from dbsn.validate import ValidateTask
+from utils.dag import run_dag
 
 
 def _extra_args(p) -> None:
     convert._extra_args(p)
     validate._extra_args(p)
     p.add_argument("--neighbours", action="store_true", help="Force re-run of neighbours step")
-    p.add_argument("--no-extend", action="store_true", help="Skip extension phase (no ext files)")
+    p.add_argument("--no-extend", action="store_true", help="Skip cross-boundary extension phase")
+    add_max_weight_arg(p)
 
 
 def main() -> None:
@@ -21,31 +23,44 @@ def main() -> None:
         resolve_provinces=False,
         setup=_extra_args,
     )
+
+    # Step 0: Discover
     if args.overwrite or not SOURCES_JSON.exists() or args.province.lower() == "all":
-        sources = discover.run(args.overwrite)
+        discover.run(args.overwrite)
     else:
         print("=== Step 0: Discover (skipped — sources.json exists, province filtered) ===")
-        sources = _read_sources()
+
+    sources = read_sources()
     provinces = filter_provinces(sources, args.province)
     if not provinces:
         sys.exit(f"No province matched '{args.province}'")
 
+    # Step 1: Neighbours — run before DAG build so dependency edges are known
     all_have_neighbours = all("neighbours" in p for p in provinces)
     if args.neighbours or not all_have_neighbours:
         print("=== Step 1: Neighbours ===")
-        all_sources = _read_sources()
-        neighbours_mod.run(all_sources, provinces, overwrite=args.neighbours)
-        sources = _read_sources()
-        provinces = filter_provinces(sources, args.province)
+        neighbours_mod.run(read_sources(), provinces, overwrite=args.neighbours)
     else:
         print("=== Step 1: Neighbours (skipped — all selected provinces have neighbours key) ===")
 
-    download.run(provinces, args.overwrite)
-    extract.run(provinces, args.overwrite, extend=not args.no_extend)
-    if args.compress and args.format == "geojson":
-        sys.exit("error: --compress only applies to --format osm")
-    convert.run(provinces, args.overwrite, args.format, args.compress)
-    validate.run(provinces, args.delete_invalid)
+    all_sources = read_sources()
+    provinces = filter_provinces(all_sources, args.province)
+    sources_by_code = {p["code"]: p for p in all_sources}
+
+    # Steps 2-5: Build DAG — ValidateTask pulls the full dep tree via dependencies()
+    tasks = [
+        ValidateTask(
+            prov,
+            sources_by_code,
+            delete_invalid=args.delete_invalid,
+            overwrite=args.overwrite,
+            fmt=args.format,
+            compress=args.compress,
+            extend=not args.no_extend,
+        )
+        for prov in provinces
+    ]
+    run_dag(tasks, args.max_weight)
 
 
 if __name__ == "__main__":

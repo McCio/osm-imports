@@ -3,6 +3,7 @@
 import shutil
 import sys
 import zipfile
+from pathlib import Path
 
 import fiona
 from fiona.crs import CRS
@@ -18,11 +19,14 @@ from dbsn.common import (
     UNZIPPED_DIR,
     ZIPS_DIR,
     Province,
+    add_max_weight_arg,
     http_client,
     parse_args,
     read_sources,
     rel,
 )
+from dbsn.download import DownloadTask
+from utils.dag import Task, run_dag
 
 _WGS84 = CRS.from_epsg(4326)
 
@@ -42,6 +46,31 @@ def _reproject(geom: dict, t: Transformer) -> dict:
     return geom
 
 
+def _write_ext_fgb(
+    ext_path: Path,
+    schema: dict,
+    p_features: dict[str, dict],
+    shared_nb: dict[str, list[dict]],
+) -> None:
+    """Write cross-boundary ext FGB. shared_nb: classid → neighbour feature(s) to union with p's."""
+    c1, c2 = ext_path.stem.split("_")[:2]
+    for stale in BUILDINGS_DIR.glob(f"{c1}_{c2}_*.fgb"):
+        stale.unlink()
+    print(f"  [extend ] {c1} ↔ {c2}: {len(shared_nb)} shared buildings → {rel(ext_path)}")
+    try:
+        with fiona.open(str(ext_path), "w", driver="FlatGeobuf", schema=schema, crs=_WGS84) as dst:
+            for cid, nb_feats in shared_nb.items():
+                all_feats = [p_features[cid], *nb_feats]
+                best = max(all_feats, key=lambda f: f["properties"].get("shape_Area") or 0.0)
+                geoms = [shapely_shape(f["geometry"]) for f in all_feats if f["geometry"]]
+                merged = unary_union(geoms)
+                dst.write({"type": "Feature", "geometry": merged.__geo_interface__, "properties": best["properties"]})
+    except Exception:
+        if ext_path.exists():
+            ext_path.unlink()
+        raise
+
+
 def _extend_province(
     p: Province,
     overwrite: bool,
@@ -59,7 +88,7 @@ def _extend_province(
     for nb in neighbours:
         nb_fgb = BUILDINGS_DIR / f"{nb['code']}_{nb['date']}.fgb"
         if not nb_fgb.exists():
-            print(f"  [extend ] {p['code']} {p['province']}: extracting neighbour {nb['code']} {nb['province']} (raw)...")
+            print(f"  [extend ] {p['code']} {p['province']}: extracting neighbour {nb['code']} {nb['province']} (raw)...")  # noqa: E501
             _extract_province(nb, overwrite=False, extend=False)
         if pre_extracted is not None:
             pre_extracted.add(nb["code"])
@@ -95,8 +124,6 @@ def _extend_province(
 
     # Step 4: For each direct neighbour, write the ext file for that pair
     for nb in neighbours:
-        shared_with_nb = {cid: nb_map for cid, nb_map in neighbour_shared.items() if nb["code"] in nb_map}
-
         c1, c2 = sorted([p["code"], nb["code"]])
         d1 = sources_by_code[c1]["date"]
         d2 = sources_by_code[c2]["date"]
@@ -107,32 +134,12 @@ def _extend_province(
             print(f"  [skip   ] ext {c1}_{c2}: {rel(ext_path)} ({size}KB)")
             continue
 
-        # Delete stale ext files for this pair (any date combination)
-        for stale in BUILDINGS_DIR.glob(f"{c1}_{c2}_*.fgb"):
-            stale.unlink()
-
-        print(f"  [extend ] {p['code']} ↔ {nb['code']}: {len(shared_with_nb)} shared buildings → {rel(ext_path)}")
-        try:
-            with fiona.open(str(ext_path), "w", driver="FlatGeobuf", schema=p_schema, crs=_WGS84) as dst:
-                for cid, nb_map in shared_with_nb.items():
-                    # nb_map = neighbour_shared[cid]: all neighbours that carry this classid
-                    all_feats = [p_features[cid], *nb_map.values()]
-
-                    best = max(all_feats, key=lambda f: f["properties"].get("shape_Area") or 0.0)
-                    geoms = [shapely_shape(f["geometry"]) for f in all_feats if f["geometry"]]
-                    merged = unary_union(geoms)
-
-                    dst.write(
-                        {
-                            "type": "Feature",
-                            "geometry": merged.__geo_interface__,
-                            "properties": best["properties"],
-                        }
-                    )
-        except Exception:
-            if ext_path.exists():
-                ext_path.unlink()
-            raise
+        shared_with_nb: dict[str, list[dict]] = {
+            cid: list(nb_map.values())
+            for cid, nb_map in neighbour_shared.items()
+            if nb["code"] in nb_map
+        }
+        _write_ext_fgb(ext_path, p_schema, p_features, shared_with_nb)
 
 
 def _extract_province(
@@ -231,6 +238,106 @@ def _extract_province(
         return False
 
 
+def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
+    """Write the cross-boundary ext FGB for the province pair (p1, p2).
+
+    Canonical file name uses alphabetically-sorted codes. Unions the building
+    fragments from both provinces for each shared classid.
+    """
+    c1, c2 = (p1["code"], p2["code"]) if p1["code"] < p2["code"] else (p2["code"], p1["code"])
+    if p1["code"] != c1:
+        p1, p2 = p2, p1
+    d1, d2 = p1["date"], p2["date"]
+    ext_path = BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}.fgb"
+
+    if ext_path.exists() and not overwrite:
+        size = ext_path.stat().st_size // 1024
+        print(f"  [skip   ] ext {c1}_{c2}: {rel(ext_path)} ({size}KB)")
+        return
+
+    p1_fgb = BUILDINGS_DIR / f"{c1}_{d1}.fgb"
+    p2_fgb = BUILDINGS_DIR / f"{c2}_{d2}.fgb"
+    if not p1_fgb.exists() or not p2_fgb.exists():
+        missing = [str(f) for f in (p1_fgb, p2_fgb) if not f.exists()]
+        print(f"  [warn   ] ext {c1}_{c2}: missing FGB(s) {missing}, skipping", file=sys.stderr)
+        return
+
+    p1_features: dict[str, dict] = {}
+    p1_schema: dict | None = None
+    with fiona.open(str(p1_fgb)) as src:
+        p1_schema = {"geometry": "Unknown", "properties": src.schema["properties"]}
+        for feat in src:
+            cid = feat["properties"].get("classid")
+            if cid:
+                p1_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
+
+    shared_nb: dict[str, list[dict]] = {}
+    with fiona.open(str(p2_fgb)) as src:
+        for feat in src:
+            cid = feat["properties"].get("classid")
+            if cid and cid in p1_features:
+                shared_nb[cid] = [{"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}]
+
+    if not shared_nb:
+        print(f"  [extend ] {c1} ↔ {c2}: 0 shared buildings, skipping")
+        return
+
+    _write_ext_fgb(ext_path, p1_schema, p1_features, shared_nb)
+
+
+class ExtractRawTask(Task):
+    def __init__(self, prov: Province, overwrite: bool = False) -> None:
+        self._prov = prov
+        self._overwrite = overwrite
+
+    @property
+    def name(self) -> str:
+        return f"extract-raw:{self._prov['code']}"
+
+    def dependencies(self) -> list[Task]:
+        return [DownloadTask(self._prov, overwrite=False)]
+
+    def skip_if(self) -> bool:
+        if self._overwrite:
+            return False
+        p = self._prov
+        return (BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb").exists()
+
+    def run(self) -> None:
+        result = _extract_province(self._prov, overwrite=self._overwrite, extend=False)
+        if result is False:
+            raise RuntimeError(f"extract failed: {self._prov['code']} {self._prov['province']}")
+
+
+class ExtendTask(Task):
+    def __init__(self, p1: Province, p2: Province, overwrite: bool = False) -> None:
+        if p1["code"] > p2["code"]:
+            p1, p2 = p2, p1
+        self._p1 = p1
+        self._p2 = p2
+        self._overwrite = overwrite
+
+    @property
+    def name(self) -> str:
+        return f"extend:{self._p1['code']}:{self._p2['code']}"
+
+    def dependencies(self) -> list[Task]:
+        return [
+            ExtractRawTask(self._p1, self._overwrite),
+            ExtractRawTask(self._p2, self._overwrite),
+        ]
+
+    def skip_if(self) -> bool:
+        if self._overwrite:
+            return False
+        c1, c2 = self._p1["code"], self._p2["code"]
+        d1, d2 = self._p1["date"], self._p2["date"]
+        return (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}.fgb").exists()
+
+    def run(self) -> None:
+        extend_pair(self._p1, self._p2, overwrite=self._overwrite)
+
+
 def run(provinces: list[Province], overwrite: bool, extend: bool = True) -> None:
     print(f"=== Step 2: Extract ({len(provinces)} provinces) ===")
     sources_by_code = {s["code"]: s for s in read_sources()} if extend else {}
@@ -254,9 +361,21 @@ def run(provinces: list[Province], overwrite: bool, extend: bool = True) -> None
 def main() -> None:
     def _setup(parser) -> None:
         parser.add_argument("--no-extend", action="store_true", help="Skip extension phase (no ext files)")
+        add_max_weight_arg(parser)
 
     args = parse_args("Step 2: extract buildings layer from GDB to FlatGeobuf", setup=_setup)
-    run(args.provinces, args.overwrite, extend=not args.no_extend)
+    sources_by_code = {p["code"]: p for p in read_sources()}
+
+    tasks: list[Task] = []
+    for prov in args.provinces:
+        tasks.append(ExtractRawTask(prov, args.overwrite))
+        if not args.no_extend:
+            for nb_code in prov.get("neighbours", []):
+                nb = sources_by_code.get(nb_code)
+                if nb:
+                    tasks.append(ExtendTask(prov, nb, args.overwrite))
+
+    run_dag(tasks, args.max_weight)
 
 
 if __name__ == "__main__":

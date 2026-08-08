@@ -3,6 +3,7 @@
 import argparse
 import csv
 import json
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -186,6 +187,20 @@ def parse_args(
         if not args.provinces:
             parser.error(f"No province matched '{args.province}'")
     return args
+
+
+def default_max_weight() -> int:
+    return max(1, int((os.cpu_count() or 4) * 0.75))
+
+
+def add_max_weight_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--max-weight",
+        type=int,
+        default=default_max_weight(),
+        metavar="N",
+        help=f"Max concurrent weight (validate=2, others=1; default: {default_max_weight()})",
+    )
 
 
 def _max_date_main() -> None:

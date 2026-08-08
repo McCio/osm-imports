@@ -1,0 +1,160 @@
+"""Weighted parallel DAG task runner. Zero external dependencies."""
+
+from __future__ import annotations
+
+import graphlib
+import threading
+import time
+from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Literal
+
+
+class Task(ABC):
+    """Base class for a single unit of pipeline work.
+
+    Subclasses must implement ``name`` and ``run()``.
+    Override ``weight`` (class attribute), ``skip_if()``, and ``dependencies()`` as needed.
+    """
+
+    weight: int = 1
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    def skip_if(self) -> bool:
+        """Return True to skip run() and use the cached result."""
+        return False
+
+    @abstractmethod
+    def run(self) -> None: ...
+
+    def dependencies(self) -> list[Task]:
+        return []
+
+
+@dataclass
+class Result:
+    name: str
+    status: Literal["done", "skipped", "failed"]
+    duration: float = 0.0
+    error: BaseException | None = None
+
+
+class _WeightSemaphore:
+    """Counting semaphore that limits total concurrent weight."""
+
+    def __init__(self, capacity: int) -> None:
+        self._capacity = capacity
+        self._used = 0
+        self._cond = threading.Condition()
+
+    def acquire(self, weight: int) -> None:
+        with self._cond:
+            while self._used + weight > self._capacity:
+                self._cond.wait()
+            self._used += weight
+
+    def release(self, weight: int) -> None:
+        with self._cond:
+            self._used -= weight
+            self._cond.notify_all()
+
+
+class Pipeline:
+    def __init__(self) -> None:
+        self._tasks: dict[str, Task] = {}
+
+    def add(self, task: Task) -> Pipeline:
+        """Register task and recursively add its dependencies (deduplicated by name)."""
+        if task.name in self._tasks:
+            return self
+        self._tasks[task.name] = task
+        for dep in task.dependencies():
+            self.add(dep)
+        return self
+
+    def run(self, max_weight: int = 4) -> dict[str, Result]:
+        """Execute all registered tasks respecting dependencies and weight budget.
+
+        Skipped tasks (skip_if() == True) bypass the semaphore entirely.
+        Raises the first exception encountered; in-flight tasks are allowed to finish.
+        """
+        if not self._tasks:
+            return {}
+
+        dep_names = {n: {d.name for d in t.dependencies()} for n, t in self._tasks.items()}
+        for name, deps in dep_names.items():
+            missing = deps - self._tasks.keys()
+            if missing:
+                raise ValueError(f"{name!r} depends on unregistered tasks: {missing}")
+
+        ts = graphlib.TopologicalSorter(dep_names)
+        ts.prepare()
+
+        dag_lock = threading.Condition()
+        sem = _WeightSemaphore(max_weight)
+        results: dict[str, Result] = {}
+        errors: list[BaseException] = []
+
+        # pool is assigned before any _execute call, so the closure reference is safe.
+        pool: ThreadPoolExecutor
+
+        def _callback(name: str, weight: int, result: Result) -> None:
+            with dag_lock:
+                results[name] = result
+                if result.status == "failed":
+                    errors.append(result.error)  # type: ignore[arg-type]
+                else:
+                    ts.done(name)
+                    if not errors:
+                        for ready in ts.get_ready():
+                            pool.submit(_execute, ready)
+                dag_lock.notify_all()
+
+        def _execute(name: str) -> None:
+            task = self._tasks[name]
+            t0 = time.monotonic()
+            try:
+                if task.skip_if():
+                    _callback(name, 0, Result(name, "skipped", time.monotonic() - t0))
+                    return
+            except Exception as e:
+                _callback(name, 0, Result(name, "failed", time.monotonic() - t0, e))
+                return
+
+            sem.acquire(task.weight)
+            try:
+                task.run()
+                _callback(name, task.weight, Result(name, "done", time.monotonic() - t0))
+            except BaseException as e:
+                _callback(name, task.weight, Result(name, "failed", time.monotonic() - t0, e))
+            finally:
+                sem.release(task.weight)
+
+        max_workers = min(len(self._tasks), max(max_weight * 4, 16))
+        with ThreadPoolExecutor(max_workers=max_workers) as pool, dag_lock:
+            for name in ts.get_ready():
+                pool.submit(_execute, name)
+            while ts.is_active() and not errors:
+                dag_lock.wait()
+
+        if errors:
+            raise errors[0]
+        return results
+
+
+def run_dag(root_tasks: list[Task], max_weight: int) -> dict[str, Result]:
+    """Build a pipeline from root tasks and run it, printing a summary."""
+    pipeline = Pipeline()
+    for task in root_tasks:
+        pipeline.add(task)
+    n = len(pipeline._tasks)
+    print(f"\n=== DAG: {n} tasks, max_weight={max_weight} ===\n")
+    results = pipeline.run(max_weight=max_weight)
+    done = sum(1 for r in results.values() if r.status == "done")
+    skipped = sum(1 for r in results.values() if r.status == "skipped")
+    print(f"\nDone: {done} executed, {skipped} cached/skipped")
+    return results

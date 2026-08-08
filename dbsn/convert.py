@@ -4,8 +4,10 @@ import sys
 
 import fiona
 
-from dbsn.common import BUILDINGS_DIR, OSM_DIR, Province, parse_args, read_sources, rel
+from dbsn.common import BUILDINGS_DIR, OSM_DIR, Province, add_max_weight_arg, parse_args, read_sources, rel
+from dbsn.extract import ExtendTask, ExtractRawTask
 from dbsn.translate import TAG_KEYS, make_translator
+from utils.dag import Task, run_dag
 from utils.writers import write_geojson, write_osm
 
 _GEOJSON_SCHEMA = {"geometry": "Unknown", "properties": dict.fromkeys(TAG_KEYS, "str")}
@@ -67,7 +69,9 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
     try:
         with fiona.open(str(in_fgb)) as src:
             if fmt == "geojson":
-                count_written = write_geojson(src, out_path, translator, _GEOJSON_SCHEMA, overrides=override_map or None)
+                count_written = write_geojson(
+                    src, out_path, translator, _GEOJSON_SCHEMA, overrides=override_map or None
+                )
             else:
                 try:
                     bounds = src.bounds
@@ -87,6 +91,54 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
         if out_path.exists():
             out_path.unlink()
         return False
+
+
+class ConvertTask(Task):
+    def __init__(
+        self,
+        prov: Province,
+        sources_by_code: dict[str, Province],
+        overwrite: bool = False,
+        fmt: str = "osm",
+        compress: bool = True,
+        extend: bool = True,
+    ) -> None:
+        self._prov = prov
+        self._sources = sources_by_code
+        self._overwrite = overwrite
+        self._fmt = fmt
+        self._compress = compress
+        self._extend = extend
+
+    @property
+    def name(self) -> str:
+        return f"convert:{self._prov['code']}"
+
+    def dependencies(self) -> list[Task]:
+        deps: list[Task] = [ExtractRawTask(self._prov, self._overwrite)]
+        if self._extend:
+            for nb_code in self._prov.get("neighbours", []):
+                nb = self._sources.get(nb_code)
+                if nb:
+                    deps.append(ExtendTask(self._prov, nb, self._overwrite))
+        return deps
+
+    def skip_if(self) -> bool:
+        if self._overwrite:
+            return False
+        p = self._prov
+        if self._fmt == "geojson":
+            ext = "geojson"
+        elif self._compress:
+            ext = "osm.bz2"
+        else:
+            ext = "osm"
+        return (OSM_DIR / f"{p['code']}_{p['date']}.{ext}").exists()
+
+    def run(self) -> None:
+        result = _convert_province(self._prov, overwrite=self._overwrite, fmt=self._fmt, compress=self._compress)
+        if result is False:
+            raise RuntimeError(f"convert failed: {self._prov['code']} {self._prov['province']}")
 
 
 def run(provinces: list[Province], overwrite: bool, fmt: str = "osm", compress: bool = False) -> None:
@@ -117,10 +169,17 @@ def _extra_args(p) -> None:
 
 
 def main() -> None:
-    args = parse_args("Step 3: convert FlatGeobuf to OSM XML or GeoJSON", setup=_extra_args)
+    def _setup(parser) -> None:
+        _extra_args(parser)
+        add_max_weight_arg(parser)
+
+    args = parse_args("Step 3: convert FlatGeobuf to OSM XML or GeoJSON", setup=_setup)
     if args.compress and args.format == "geojson":
         sys.exit("error: --compress only applies to --format osm")
-    run(args.provinces, args.overwrite, args.format, args.compress)
+
+    sources_by_code = {p["code"]: p for p in read_sources()}
+    tasks = [ConvertTask(prov, sources_by_code, args.overwrite, args.format, args.compress) for prov in args.provinces]
+    run_dag(tasks, args.max_weight)
 
 
 if __name__ == "__main__":
