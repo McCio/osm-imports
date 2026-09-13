@@ -26,13 +26,17 @@ sudo apt install osmium-tool
 
 - Branch from `main`, open a PR back to `main`
 - Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat`, `fix`, `refactor`, `chore`, …)
-- Run `uv run ruff format && uv run ruff check` before committing
+- Before committing:
+  ```bash
+  uv run ruff format && uv run ruff check
+  uv run pytest tests/
+  ```
 
 ## Extending the DBSN building translation
 
-Tag mappings live in `dbsn/translate.py`. After adding a new tag key:
+Tag mappings live in per-layer files: `dbsn/translate_edifc.py`, `dbsn/translate_edi_min.py`, etc. After adding a new tag key:
 
-1. Add the key to `TAG_KEYS` in the same file — this keeps the GeoJSON output schema in sync.
+1. Add the key to `tag_keys` in the relevant layer's `LAYER: LayerDef` — this keeps the GeoJSON output schema in sync.
 2. Smoke-test with `uv run dbsn-convert --province VE --format geojson --overwrite`.
 
 ## Adding a new importer
@@ -45,7 +49,7 @@ Each data source gets its own package alongside `dbsn/`:
   discover.py   # fetch source URLs
   download.py   # download archives
   extract.py    # GDB/Shapefile → FlatGeobuf (reuse fiona)
-  convert.py    # FlatGeobuf → OSM XML / GeoJSON (reuse utils/convert.py)
+  convert.py    # FlatGeobuf → OSM XML / GeoJSON (reuse utils/writers.py)
   translate.py  # attribute → OSM tag mapping + TAG_KEYS
   validate.py   # osmium check-refs (reuse utils/validate.py)
   pipeline.py   # wire the steps

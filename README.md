@@ -45,6 +45,7 @@ All commands accept `--province CODE|NAME|REGION|all` (comma-separated for multi
 | `uv run dbsn-convert  --province MI` | Convert FlatGeobuf to OSM XML |
 | `uv run dbsn-convert  --province MI --format geojson` | Convert to GeoJSON instead |
 | `uv run dbsn-convert  --province MI --compress` | Produce `.osm.bz2` (~10× smaller; JOSM accepts it natively) |
+| `uv run dbsn-convert  --province VE --area Marghera` | Convert only features intersecting the named `loc_sg` locality |
 | `uv run dbsn-validate --province MI` | Validate OSM/OSM.BZ2 files with `osmium check-refs` |
 | `uv run dbsn-all      --province all` | Run all steps in sequence |
 | `uv run dbsn-all      --province all --neighbours` | Force re-run of the neighbours step |
@@ -86,7 +87,7 @@ data/dbsn/
   buildings/
     {CODE}_{date}.fgb    # per-province raw FlatGeobuf (one code segment)
     {C1}_{C2}_{C1date}_{C2date}.fgb   # cross-province ext file (two code segments, alphabetical)
-  osm/                   # per-province OSM XML (or .osm.bz2 / .geojson)
+  osm/                   # per-province OSM XML (or .osm.bz2 / .geojson); area-filtered runs append _{locality} to the stem
 ```
 
 Ext files contain only the cross-boundary buildings as complete (unioned) geometries.
@@ -119,7 +120,7 @@ provinces that share a boundary, used by `extract` to locate cross-province buil
 
 ### Per-region tag overrides
 
-`dbsn/translate.py` applies national tag mappings then optionally runs a per-region override (keyed by the `region` field in `sources.json`).  Add a function to `_REGION_OVERRIDES` to customise tagging for a specific region.
+Each `dbsn/translate_<layer>.py` applies national tag mappings. `dbsn/translate_edifc.py` additionally runs a per-region override (keyed by the `region` field in `sources.json`). Add a function to `_REGION_OVERRIDES` in that file to customise tagging for a specific region.
 
 Current overrides:
 
@@ -132,3 +133,57 @@ Current overrides:
 - [Danysan1/dbsn-import](https://github.com/Danysan1/dbsn-import): province source list and download URLs
 - [musuruan/osm_imports](https://github.com/musuruan/osm_imports): DBSN tag translation (`edifici.py`)
 - [arcanma/Umbria_buildings_import](https://github.com/arcanma/Umbria_buildings_import): additional mappings and per-region override pattern
+
+---
+
+## ICCU Libraries Import Pipeline
+
+Conflates [ICCU](https://opendata.anagrafe.iccu.sbn.it/) library catalogue data with existing OSM objects.
+
+Releases are tagged `iccu-<date>`.
+
+### Prerequisites
+
+Same as DBSN (`uv sync`). No additional system tools required.
+
+### Usage
+
+All commands accept `--region CODE|NAME|REGION|all` (comma-separated for multiple).
+
+| Command | Description |
+|---|---|
+| `uv run iccu-download`               | Download ICCU opendata ZIP (etag-cached; skips if unchanged) |
+| `uv run iccu-clean`                  | Clean and deduplicate the raw CSV into `data/iccu/clean.csv` |
+| `uv run iccu-validate`               | Validate `clean.csv` for data quality (duplicate ISILs, bad coordinates, …) |
+| `uv run iccu-export --region VE`     | Export dataset as OSM XML + GeoJSON for a region |
+| `uv run iccu-conflate --region VE`   | Conflate against OSM via Overpass; produce change files |
+| `uv run iccu-all --region all`       | Run all steps in sequence for one or more regions |
+| `uv run iccu-list-labels`            | List available region labels |
+
+Add `--overwrite` to reprocess existing output files.
+
+### Pipeline steps
+
+```
+download → clean → [validate] → export → conflate
+```
+
+`iccu-validate` is a standalone check on `clean.csv`; it does not run automatically as part of `iccu-all`. Run it before `export`/`conflate` when troubleshooting data quality issues. Errors exit 1 (duplicate ISILs, malformed ISILs, swapped coordinates); warnings are logged to stderr but do not block the pipeline.
+
+### Data layout
+
+```
+data/iccu/
+  source/                  # raw CSV files extracted from the ICCU ZIP
+  iccu.etag                # etag for conditional re-download
+  clean.csv                # cleaned, geocoded library records
+  overpass/
+    {region}.osm           # cached Overpass query result per region
+  osm/
+    {region}/
+      dataset.osm(.bz2)    # full library dataset for conflation input
+      dataset.geojson
+      changes.osm          # additions / modifications vs existing OSM
+      changes.osc          # same in OSC format
+      changes.geojson      # for visual review in JOSM / umap
+```
