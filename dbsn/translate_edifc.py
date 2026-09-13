@@ -1,7 +1,7 @@
 # coding=UTF-8
 
 """
-Tag translation for DBSN EDIFC (buildings) layer.
+Tag translation for the DBSN EDIFC (buildings) layer.
 
 Based on musuruan/osm_imports DBSN/edifici.py (Andrea Musuruane <musuruan@gmail.com>),
 licensed ODbL 1.0.  Local copy maintained here to extend mappings independently.
@@ -62,11 +62,9 @@ Changes vs upstream:
   - meta_ist: mapped to source=DBSN;IGM[;…]
   - check_geom 01: fixme:geometry tag
 
-Per-region overrides (via make_translator):
+Per-region overrides (via region param):
   - Umbria: edifc_mon 01 → historic=monument (+ fixme) instead of generic historic=yes
 """
-
-from collections.abc import Callable
 
 TAG_KEYS = [
     "name",
@@ -274,6 +272,14 @@ def _base_translate(attrs: dict | None) -> dict | None:
     if ht and ht > 0:
         tags["height"] = str(round(ht, 1))
 
+    _apply_source_tag(tags, attrs)
+
+    if attrs.get("check_geom") == "01":
+        tags["fixme:geometry"] = "check if building is cut on regional border"
+    return tags
+
+
+def _apply_source_tag(tags: dict, attrs: dict) -> None:
     match attrs.get("meta_ist"):
         case "01":
             tags["source"] = "DBSN;IGM"
@@ -288,11 +294,6 @@ def _base_translate(attrs: dict | None) -> dict | None:
         case "0504":
             tags["source"] = "DBSN;IGM;Agenzia Entrate"
 
-    if attrs.get("check_geom") == "01":
-        tags["fixme:geometry"] = "check if building is cut on regional border"
-
-    return tags
-
 
 def _umbria_overrides(tags: dict, attrs: dict) -> None:
     if attrs.get("edifc_mon") == "01":
@@ -300,27 +301,19 @@ def _umbria_overrides(tags: dict, attrs: dict) -> None:
         tags["fixme:building"] = "verify: if real monument add descriptive tags"
 
 
-_REGION_OVERRIDES: dict[str, Callable[[dict, dict], None]] = {
+_REGION_OVERRIDES = {
     "Umbria": _umbria_overrides,
 }
 
 
-def make_translator(province=None) -> Callable[[dict | None], dict | None]:
-    """Return a translate fn optionally enhanced with per-region overrides."""
-    if not province:
-        return translate
-    override = _REGION_OVERRIDES.get(province["region"] or "")
-    if not override:
-        return translate
-
-    def _fn(attrs: dict | None) -> dict | None:
-        tags = _base_translate(attrs)
-        if tags is not None:
+def translate(attrs: dict | None, region: str | None = None) -> dict | None:
+    tags = _base_translate(attrs)
+    if tags is not None and region:
+        override = _REGION_OVERRIDES.get(region)
+        if override:
             override(tags, attrs)
-        return tags
-
-    return _fn
+    return tags
 
 
-def translate(attrs: dict | None) -> dict | None:
-    return _base_translate(attrs)
+from dbsn.layer_types import LayerDef
+LAYER = LayerDef(name="edifc", filter_fn=None, supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS)

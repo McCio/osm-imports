@@ -22,7 +22,7 @@ def _safe_tags(raw: dict | None) -> dict:
     return {k: _INVALID_XML.sub("", str(v))[:_OSM_MAX_TAG] for k, v in raw.items() if v is not None}
 
 
-def _translated(src, translate_fn: Callable, overrides: dict | None = None):
+def translate_features(src, translate_fn: Callable, overrides: dict | None = None):
     for feat in src:
         geom = feat["geometry"]
         if geom is None:
@@ -106,7 +106,8 @@ def _add_area_relation(
     return all_ways, rel
 
 
-def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None, overrides: dict | None = None) -> int:
+def write_osm_items(items, output_path: Path, bounds=None) -> int:
+    """Write pre-translated (geom, tags) items to an OSM file with shared ID counters."""
     node_ids = count(-1, -1)
     way_ids = count(-1, -1)
     rel_ids = count(-1, -1)
@@ -122,7 +123,7 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None, overr
     written = 0
 
     with osmium.SimpleWriter(str(output_path), header=h) as writer:
-        for geom, tags in _translated(src, translate_fn, overrides):
+        for geom, tags in items:
             if geom["type"] == "Point":
                 lon, lat = geom["coordinates"][0], geom["coordinates"][1]
                 nid = next(node_ids)
@@ -151,6 +152,11 @@ def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None, overr
     return written
 
 
+def write_osm(src, output_path: Path, translate_fn: Callable, bounds=None, overrides: dict | None = None) -> int:
+    return write_osm_items(translate_features(src, translate_fn, overrides), output_path, bounds)
+
+
+
 def write_geojson(
     src, output_path: Path, translate_fn: Callable, schema: dict, crs=None, overrides: dict | None = None
 ) -> int:
@@ -159,7 +165,7 @@ def write_geojson(
     schema_props = set(schema.get("properties", {}).keys())
     written = 0
     with fiona.open(str(output_path), "w", driver="GeoJSON", schema=schema, crs=crs) as dst:
-        for geom, tags in _translated(src, translate_fn, overrides):
+        for geom, tags in translate_features(src, translate_fn, overrides):
             props = {**{k: None for k in schema_props}, **tags}
             dst.write({"type": "Feature", "geometry": geom, "properties": props})
             written += 1

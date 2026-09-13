@@ -235,5 +235,24 @@ def add_max_weight_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_layers_arg(parser: argparse.ArgumentParser, all_names: list[str]) -> None:
+    parser.add_argument(
+        "--layers",
+        metavar="LAYER[,LAYER...]",
+        help=f"Comma-separated layer names to process (default: all). Available: {', '.join(all_names)}",
+    )
+
+
+def parse_layers(raw: str | None, all_names: list[str]) -> list[str] | None:
+    """Return selected layer names, or None meaning 'all'."""
+    if raw is None:
+        return None
+    names = [s.strip() for s in raw.split(",") if s.strip()]
+    unknown = [n for n in names if n not in all_names]
+    if unknown:
+        raise ValueError(f"Unknown layer(s): {', '.join(unknown)}. Available: {', '.join(all_names)}")
+    return names
+
+
 def _max_date_main() -> None:
     print(max_date())

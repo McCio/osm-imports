@@ -1,6 +1,8 @@
-"""Step 3: Convert FlatGeobuf buildings to OSM XML or GeoJSON."""
+"""Step 3: Convert FlatGeobuf layers to a single OSM XML (or GeoJSON) per province."""
 
+import itertools
 import sys
+from pathlib import Path
 
 import fiona
 
@@ -8,18 +10,18 @@ from dbsn.common import (
     BUILDINGS_DIR,
     OSM_DIR,
     Province,
+    add_layers_arg,
     add_max_weight_arg,
     parse_args,
+    parse_layers,
     parse_overwrite,
     read_sources,
     rel,
 )
-from dbsn.extract import ExtendTask, ExtractRawTask
-from dbsn.translate import TAG_KEYS, make_translator
+from dbsn.extract import ExtendTask, ExtractRawTask, fgb_path
+from dbsn.layers import LayerDef, get_layers
 from utils.dag import Task, run_dag
-from utils.writers import write_geojson, write_osm
-
-_GEOJSON_SCHEMA = {"geometry": "Unknown", "properties": dict.fromkeys(TAG_KEYS, "str")}
+from utils.writers import translate_features, write_geojson, write_osm_items
 
 
 def _build_override_map(p: Province, sources_by_code: dict[str, Province]) -> dict[str, dict]:
@@ -46,9 +48,28 @@ def _build_override_map(p: Province, sources_by_code: dict[str, Province]) -> di
     return override_map
 
 
-def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: bool = False) -> bool | None:
-    in_fgb = BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb"
-    if not in_fgb.exists():
+def _layer_items(p: Province, layer: LayerDef, region: str, override_map: dict | None = None):
+    """Yield translated (geom, tags) items from a single layer FGB."""
+    fgb = fgb_path(p["code"], p["date"], layer.name)
+    if not fgb.exists():
+        return
+    translate_fn = lambda attrs: layer.translate_fn(attrs, region)  # noqa: E731
+    overrides = override_map if layer.supports_extension else None
+    with fiona.open(str(fgb)) as src:
+        yield from translate_features(src, translate_fn, overrides)
+
+
+def _convert_province(
+    p: Province,
+    overwrite: bool,
+    sources_by_code: dict[str, Province],
+    fmt: str = "osm",
+    compress: bool = False,
+    layers: list[LayerDef] | None = None,
+) -> bool | None:
+    active = layers or get_layers()
+    edifc_fgb = fgb_path(p["code"], p["date"], "edifc")
+    if not edifc_fgb.exists():
         print(f"  [skip   ] {p['code']} {p['province']}: FGB not found, run extract first")
         return None
 
@@ -60,6 +81,7 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
     else:
         ext = "osm"
     out_path = OSM_DIR / f"{p['code']}_{p['date']}.{ext}"
+
     if out_path.exists() and not overwrite:
         size = out_path.stat().st_size // 1024
         print(f"  [skip   ] {p['code']} {p['province']}: {rel(out_path)} ({size}KB) (use --overwrite to reprocess)")
@@ -68,29 +90,45 @@ def _convert_province(p: Province, overwrite: bool, fmt: str = "osm", compress: 
     if out_path.exists():
         out_path.unlink()
 
-    sources_by_code = {s["code"]: s for s in read_sources()}
     override_map = _build_override_map(p, sources_by_code)
     if override_map:
         print(f"  [override] {p['code']} {p['province']}: {len(override_map)} cross-boundary buildings from ext files")
 
-    print(f"  [convert] {p['code']} {p['province']}: {rel(in_fgb)} → {rel(out_path)}")
-    translator = make_translator(p)
+    region = p.get("region") or ""
+    layers_str = ", ".join(ld.name for ld in active)
+    print(f"  [convert] {p['code']} {p['province']}: [{layers_str}] → {rel(out_path)}")
+
     try:
-        with fiona.open(str(in_fgb)) as src:
-            if fmt == "geojson":
-                count_written = write_geojson(
-                    src, out_path, translator, _GEOJSON_SCHEMA, overrides=override_map or None
-                )
-            else:
-                try:
+        if fmt == "geojson":
+            all_tag_keys = sorted({k for ld in active for k in ld.tag_keys})
+            schema = {"geometry": "Unknown", "properties": dict.fromkeys(all_tag_keys, "str")}
+            total = 0
+            # geojson: write each layer separately (fiona doesn't support chained append easily)
+            with fiona.open(str(edifc_fgb)) as first_src:
+                crs = first_src.crs
+            with fiona.open(str(out_path), "w", driver="GeoJSON", schema=schema, crs=crs) as dst:
+                schema_props = set(all_tag_keys)
+                for layer in active:
+                    for geom, tags in _layer_items(p, layer, region, override_map):
+                        dst.write({"type": "Feature", "geometry": geom,
+                                   "properties": {**{k: None for k in schema_props}, **tags}})
+                        total += 1
+            count_written = total
+        else:
+            # Determine bounds from edifc FGB (covers the primary layer; good enough for bbox)
+            bounds = None
+            try:
+                with fiona.open(str(edifc_fgb)) as src:
                     bounds = src.bounds
-                except Exception as exc:
-                    print(
-                        f"  [warn   ] {p['code']} {p['province']}: bounds unavailable ({exc}), omitting bbox",
-                        file=sys.stderr,
-                    )
-                    bounds = None
-                count_written = write_osm(src, out_path, translator, bounds, overrides=override_map or None)
+            except Exception as exc:
+                print(f"  [warn   ] {p['code']} {p['province']}: bounds unavailable ({exc}), omitting bbox",
+                      file=sys.stderr)
+
+            items = itertools.chain.from_iterable(
+                _layer_items(p, layer, region, override_map) for layer in active
+            )
+            count_written = write_osm_items(items, out_path, bounds)
+
         size = out_path.stat().st_size // 1024
         print(f"  [done   ] {p['code']} {p['province']}: {rel(out_path)} ({count_written} features, {size}KB)")
         return True
@@ -114,6 +152,7 @@ class ConvertTask(Task):
         fmt: str = "osm",
         compress: bool = True,
         extend: bool = True,
+        layer_names: list[str] | None = None,
     ) -> None:
         self._prov = prov
         self._sources = sources_by_code
@@ -121,6 +160,7 @@ class ConvertTask(Task):
         self._fmt = fmt
         self._compress = compress
         self._extend = extend
+        self._layer_names = layer_names  # None = all; stored as names (picklable)
 
     @property
     def name(self) -> str:
@@ -129,8 +169,14 @@ class ConvertTask(Task):
     def log_cached(self) -> None:
         print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
 
+    def _active_layers(self) -> list[LayerDef]:
+        all_layers = get_layers()
+        if self._layer_names is None:
+            return all_layers
+        return [ld for ld in all_layers if ld.name in self._layer_names]
+
     def dependencies(self) -> list[Task]:
-        deps: list[Task] = [ExtractRawTask(self._prov, self._overwrite_steps)]
+        deps: list[Task] = [ExtractRawTask(self._prov, self._overwrite_steps, self._layer_names)]
         if self._extend:
             for nb_code in self._prov.get("neighbours", []):
                 nb = self._sources.get(nb_code)
@@ -152,7 +198,12 @@ class ConvertTask(Task):
 
     def run(self) -> None:
         result = _convert_province(
-            self._prov, overwrite="convert" in self._overwrite_steps, fmt=self._fmt, compress=self._compress
+            self._prov,
+            overwrite="convert" in self._overwrite_steps,
+            sources_by_code=self._sources,
+            fmt=self._fmt,
+            compress=self._compress,
+            layers=self._active_layers(),
         )
         if result is False:
             raise RuntimeError(f"convert failed: {self._prov['code']} {self._prov['province']}")
@@ -160,9 +211,10 @@ class ConvertTask(Task):
 
 def run(provinces: list[Province], overwrite: bool, fmt: str = "osm", compress: bool = False) -> None:
     print(f"=== Step 3: Convert ({len(provinces)} provinces, format={fmt}{', compressed' if compress else ''}) ===")
+    sources_by_code = {s["code"]: s for s in read_sources()}
     ok = failed = skipped = 0
     for p in provinces:
-        result = _convert_province(p, overwrite, fmt, compress)
+        result = _convert_province(p, overwrite, sources_by_code, fmt, compress)
         if result is True:
             ok += 1
         elif result is None:
@@ -174,29 +226,39 @@ def run(provinces: list[Province], overwrite: bool, fmt: str = "osm", compress: 
         sys.exit(1)
 
 
-def _extra_args(p) -> None:
-    p.add_argument(
-        "--format",
-        choices=["osm", "geojson"],
-        default="osm",
-        metavar="osm|geojson",
-        help="Output format (default: osm)",
-    )
-    p.add_argument("--compress", action="store_true", help="Compress OSM output as .osm.bz2")
-
-
 def main() -> None:
+    all_layers = get_layers()
+    all_layer_names = [ld.name for ld in all_layers]
+
     def _setup(parser) -> None:
-        _extra_args(parser)
+        parser.add_argument(
+            "--format",
+            choices=["osm", "geojson"],
+            default="osm",
+            metavar="osm|geojson",
+            help="Output format (default: osm)",
+        )
+        parser.add_argument("--compress", action="store_true", help="Compress OSM output as .osm.bz2")
+        add_layers_arg(parser, all_layer_names)
         add_max_weight_arg(parser)
 
-    args = parse_args("Step 3: convert FlatGeobuf to OSM XML or GeoJSON", setup=_setup)
+    args = parse_args("Step 3: convert FlatGeobuf layers to OSM XML or GeoJSON", setup=_setup)
     if args.compress and args.format == "geojson":
         sys.exit("error: --compress only applies to --format osm")
 
+    try:
+        selected_names = parse_layers(args.layers, all_layer_names)
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
+    active_layers = [ld for ld in all_layers if selected_names is None or ld.name in selected_names]
+
     overwrite_steps = parse_overwrite(args.overwrite)
     sources_by_code = {p["code"]: p for p in read_sources()}
-    tasks = [ConvertTask(prov, sources_by_code, overwrite_steps, args.format, args.compress) for prov in args.provinces]
+    active_names = selected_names  # None = all layers
+    tasks = [
+        ConvertTask(prov, sources_by_code, overwrite_steps, args.format, args.compress, layer_names=active_names)
+        for prov in args.provinces
+    ]
     run_dag(tasks, args.max_weight)
 
 
