@@ -196,11 +196,6 @@ def _extract_province(
                       file=sys.stderr)
 
     if not overwrite:
-        osm_path = OSM_DIR / f"{p['code']}_{p['date']}.osm"
-        osm_bz2 = OSM_DIR / f"{p['code']}_{p['date']}.osm.bz2"
-        if osm_path.exists() or osm_bz2.exists():
-            print(f"  [skip   ] {p['code']} {p['province']}: OSM already done (use --overwrite to reprocess)")
-            return True
         if all(f.exists() for f in out_fgbs):
             size = out_fgbs[0].stat().st_size // 1024
             print(f"  [skip   ] {p['code']} {p['province']}: FGBs present ({size}KB) (use --overwrite to reprocess)")
@@ -251,6 +246,12 @@ def _extract_province(
             size = out_fgb.stat().st_size // 1024
             print(f"  [done   ] {p['code']} {p['province']}: {rel(out_fgb)} ({written} features, {size}KB)")
 
+        for name in absent:
+            stub = fgb_path(p["code"], p["date"], name)
+            with fiona.open(str(stub), "w", driver="FlatGeobuf",
+                            schema={"geometry": "Unknown", "properties": {}}, crs=_WGS84) as _:
+                pass
+
         shutil.rmtree(unzip_dir)
 
         if sources_by_code is None:
@@ -261,9 +262,9 @@ def _extract_province(
     except Exception as exc:
         print(f"  [error  ] {p['code']} {p['province']}: {exc}", file=sys.stderr)
         for s in present:
-            f = fgb_path(p["code"], p["date"], s.name)
-            if f.exists():
-                f.unlink()
+            fgb_path(p["code"], p["date"], s.name).unlink(missing_ok=True)
+        for name in absent:
+            fgb_path(p["code"], p["date"], name).unlink(missing_ok=True)
         shutil.rmtree(unzip_dir, ignore_errors=True)
         return False
 
@@ -287,7 +288,7 @@ def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
         p1_fgb = fgb_path(c1, d1, spec.name)
         p2_fgb = fgb_path(c2, d2, spec.name)
         if not p1_fgb.exists() or not p2_fgb.exists():
-            missing = [str(f) for f in (p1_fgb, p2_fgb) if not f.exists()]
+            missing = [rel(f) for f in (p1_fgb, p2_fgb) if not f.exists()]
             print(f"  [warn   ] ext {c1}_{c2} ({spec.name}): missing FGB(s) {missing}, skipping", file=sys.stderr)
             continue
 
@@ -354,8 +355,7 @@ class ExtractRawTask(Task):
         if "extract" in self._overwrite_steps:
             return False
         p = self._prov
-        # Use edifc FGB as the sentinel — always present if extraction completed
-        return fgb_path(p["code"], p["date"], "edifc").exists()
+        return all(fgb_path(p["code"], p["date"], s.name).exists() for s in self._active())
 
     def run(self) -> None:
         result = _extract_province(
@@ -396,7 +396,10 @@ class ExtendTask(Task):
             return False
         c1, c2 = self._p1["code"], self._p2["code"]
         d1, d2 = self._p1["date"], self._p2["date"]
-        return (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_edifc.fgb").exists()
+        return all(
+            (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_{s.name}.fgb").exists()
+            for s in get_layer_specs() if s.supports_extension
+        )
 
     def run(self) -> None:
         extend_pair(self._p1, self._p2, overwrite="extend" in self._overwrite_steps)

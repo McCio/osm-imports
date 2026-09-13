@@ -114,13 +114,7 @@ class DownloadTask(Task):
     def skip_if(self) -> bool:
         if "download" in self._overwrite_steps:
             return False
-        p = self._prov
-        return (
-            _zip_complete(ZIPS_DIR / p["zip_name"], p)
-            or (BUILDINGS_DIR / f"{p['code']}_{p['date']}.fgb").exists()
-            or (OSM_DIR / f"{p['code']}_{p['date']}.osm").exists()
-            or (OSM_DIR / f"{p['code']}_{p['date']}.osm.bz2").exists()
-        )
+        return _zip_complete(ZIPS_DIR / self._prov["zip_name"], self._prov)
 
     def run(self) -> None:
         with http_client() as client:

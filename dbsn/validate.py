@@ -68,9 +68,6 @@ class ValidateTask(Task):
         return [ConvertTask(self._prov, self._sources, self._overwrite_steps, self._fmt, self._compress, self._extend,
                             area=self._area)]
 
-    def skip_if(self) -> bool:
-        return not bool(_osm_files(self._prov, self._area))
-
     def run(self) -> None:
         result = _validate_province(self._prov, self._delete_invalid, self._area)
         if result is False:

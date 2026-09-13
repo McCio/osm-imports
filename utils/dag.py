@@ -102,6 +102,23 @@ class Pipeline:
             if missing:
                 raise ValueError(f"{name!r} depends on unregistered tasks: {missing}")
 
+        # Pre-compute which tasks actually need to run.
+        # A task is "needed" only if it has a consumer that will run.
+        # Iteratively prune tasks whose entire consumer set will skip.
+        skip_cache = {n: t.skip_if() for n, t in self._tasks.items()}
+        rev_deps: dict[str, set[str]] = {n: set() for n in self._tasks}
+        for n, deps in dep_names.items():
+            for d in deps:
+                rev_deps[d].add(n)
+        needed: set[str] = {n for n, skip in skip_cache.items() if not skip}
+        changed = True
+        while changed:
+            changed = False
+            for name in list(needed):
+                if rev_deps[name] and not any(c in needed for c in rev_deps[name]):
+                    needed.discard(name)
+                    changed = True
+
         ts = graphlib.TopologicalSorter(dep_names)
         ts.prepare()
 
@@ -133,13 +150,9 @@ class Pipeline:
         def _execute(name: str) -> None:
             task = self._tasks[name]
             t0 = time.monotonic()
-            try:
-                if task.skip_if():
-                    task.log_cached()
-                    _callback(name, 0, Result(name, "skipped", time.monotonic() - t0))
-                    return
-            except Exception as e:
-                _callback(name, 0, Result(name, "failed", time.monotonic() - t0, e))
+            if name not in needed or skip_cache[name]:
+                task.log_cached()
+                _callback(name, 0, Result(name, "skipped", time.monotonic() - t0))
                 return
 
             sem.acquire(task.weight)
