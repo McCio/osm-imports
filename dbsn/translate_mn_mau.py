@@ -2,6 +2,8 @@
 
 """Tag translation for the DBSN MN_MAU (manufatti monumentali e di arredo urbano) layer."""
 
+from dbsn.common import it_titlecase
+from dbsn.layer_types import LayerDef
 from dbsn.translate_edifc import _apply_source_tag
 
 TAG_KEYS = [
@@ -20,8 +22,9 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
 
     tags = {}
 
-    if attrs.get("mn_mau_nom", "UNK") not in ("UNK", None, ""):
-        tags["name"] = attrs["mn_mau_nom"]
+    name = it_titlecase(attrs.get("mn_mau_nom") or "UNK")
+    if name:
+        tags["name"] = name
 
     match attrs.get("mn_mau_ty"):
         case "01":
@@ -41,5 +44,4 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
     return tags
 
 
-from dbsn.layer_types import LayerDef
 LAYER = LayerDef(name="mn_mau", filter_fn=None, supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS)

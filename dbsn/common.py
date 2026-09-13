@@ -17,6 +17,63 @@ import shapely.ops
 from pyproj import Transformer
 from shapely.geometry import shape as shapely_shape
 
+# ---------------------------------------------------------------------------
+# Italian title-case for DBSN names (ALL CAPS in source)
+# ---------------------------------------------------------------------------
+
+_IT_LOWER = frozenset({
+    # articles
+    "il", "lo", "la", "i", "gli", "le",
+    # simple prepositions / conjunctions
+    "di", "a", "da", "in", "con", "su", "per", "tra", "fra",
+    "e", "ed", "o", "od", "né", "ma", "se", "che", "come",
+    # contracted preposition+article
+    "del", "dello", "della", "dei", "degli", "delle",
+    "dal", "dallo", "dalla", "dai", "dagli", "dalle",
+    "nel", "nello", "nella", "nei", "negli", "nelle",
+    "sul", "sullo", "sulla", "sui", "sugli", "sulle",
+    "al", "allo", "alla", "ai", "agli", "alle",
+    "col", "coi",
+})
+
+# Words containing a dot are treated as abbreviations/acronyms → kept as-is.
+# e.g. S., S.P.A., S.R.L., SS., U.S.L.
+_HAS_DOT = re.compile(r"\.")
+
+# Pre-apostrophe elision forms (dell’, nell’, sull’, all’, dall’, l’, un’)
+_IT_ELISION = frozenset({
+    "dell", "dall", "nell", "sull", "all", "coll", "l", "un",
+})
+
+# Match any apostrophe variant (straight U+0027, curly U+2018/2019, modifier U+02BC)
+_APOS_RE = re.compile("[\x27‘’ʼ]")
+
+
+def _titlecase_word(w: str, first: bool) -> str:
+    """Apply Italian title-case rules to a single space-separated token."""
+    if _HAS_DOT.search(w):
+        return w  # abbreviation / acronym: keep exactly
+    m = _APOS_RE.search(w)
+    if m:
+        pre, post = w[:m.start()], w[m.end():]
+        pre_low = pre.lower()
+        pre_out = pre_low if (not first and pre_low in _IT_ELISION) else pre.capitalize()
+        post_out = post.capitalize() if post else ""
+        return f"{pre_out}'{post_out}"
+    lower = w.lower()
+    if not first and lower in _IT_LOWER:
+        return lower
+    return w.capitalize()
+
+
+def it_titlecase(name: str) -> str:
+    """Convert an ALL-CAPS Italian building name to title case."""
+    if not name or name.upper() == "UNK":
+        return ""
+    tokens = name.split()
+    return " ".join(_titlecase_word(t, i == 0) for i, t in enumerate(tokens))
+
+
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 BASE_DIR = Path(__file__).parent.parent

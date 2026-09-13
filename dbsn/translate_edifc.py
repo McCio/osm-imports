@@ -66,6 +66,9 @@ Per-region overrides (via region param):
   - Umbria: edifc_mon 01 → historic=monument (+ fixme) instead of generic historic=yes
 """
 
+from dbsn.common import it_titlecase
+from dbsn.layer_types import LayerDef
+
 TAG_KEYS = [
     "name",
     "layer",
@@ -106,8 +109,9 @@ def _base_translate(attrs: dict | None) -> dict | None:
 
     tags = {}
 
-    if attrs.get("edifc_nome", "UNK") != "UNK":
-        tags["name"] = attrs["edifc_nome"]
+    name = it_titlecase(attrs.get("edifc_nome", "UNK"))
+    if name:
+        tags["name"] = name
 
     if attrs.get("edifc_sot") == "02":
         tags["layer"] = "-1"
@@ -315,5 +319,4 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
     return tags
 
 
-from dbsn.layer_types import LayerDef
 LAYER = LayerDef(name="edifc", filter_fn=None, supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS)

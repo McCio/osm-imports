@@ -8,14 +8,14 @@ from dbsn.layer_types import LayerDef, LayerSpec
 
 
 def _load() -> list[LayerDef]:
-    from dbsn.translate_edifc import LAYER as edifc
-    from dbsn.translate_edi_min import LAYER as edi_min
-    from dbsn.translate_mn_ind import LAYER as mn_ind
-    from dbsn.translate_mn_mau import LAYER as mn_mau
-    from dbsn.translate_attr_sp import LAYER as attr_sp
-    from dbsn.translate_sc_dis import LAYER as sc_dis
-    from dbsn.translate_ponte import LAYER as ponte
-    from dbsn.translate_galler import LAYER as galler
+    from dbsn.translate_attr_sp import LAYER as attr_sp  # noqa: PLC0415
+    from dbsn.translate_edi_min import LAYER as edi_min  # noqa: PLC0415
+    from dbsn.translate_edifc import LAYER as edifc  # noqa: PLC0415
+    from dbsn.translate_galler import LAYER as galler  # noqa: PLC0415
+    from dbsn.translate_mn_ind import LAYER as mn_ind  # noqa: PLC0415
+    from dbsn.translate_mn_mau import LAYER as mn_mau  # noqa: PLC0415
+    from dbsn.translate_ponte import LAYER as ponte  # noqa: PLC0415
+    from dbsn.translate_sc_dis import LAYER as sc_dis  # noqa: PLC0415
     return [edifc, edi_min, mn_ind, mn_mau, attr_sp, sc_dis, ponte, galler]
 
 

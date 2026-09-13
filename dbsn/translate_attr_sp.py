@@ -2,6 +2,8 @@
 
 """Tag translation for the DBSN ATTR_SP (attrezzature sportive) layer."""
 
+from dbsn.common import it_titlecase
+from dbsn.layer_types import LayerDef
 from dbsn.translate_edifc import _apply_source_tag
 
 TAG_KEYS = [
@@ -19,8 +21,9 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
 
     tags = {}
 
-    if attrs.get("attr_sp_nom", "UNK") not in ("UNK", None, ""):
-        tags["name"] = attrs["attr_sp_nom"]
+    name = it_titlecase(attrs.get("attr_sp_nom") or "UNK")
+    if name:
+        tags["name"] = name
 
     match attrs.get("attr_sp_ty"):
         case "01":
@@ -81,5 +84,4 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
     return tags
 
 
-from dbsn.layer_types import LayerDef
 LAYER = LayerDef(name="attr_sp", filter_fn=None, supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS)

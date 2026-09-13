@@ -2,6 +2,7 @@
 
 """Tag translation for the DBSN SC_DIS (area di scavo o discarica) layer."""
 
+from dbsn.layer_types import LayerDef
 from dbsn.translate_edifc import _apply_source_tag
 
 TAG_KEYS = [
@@ -28,5 +29,7 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
     return tags
 
 
-from dbsn.layer_types import LayerDef
-LAYER = LayerDef(name="sc_dis", filter_fn=lambda p: p.get("sc_dis_ty") in ("01", "02"), supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS)
+LAYER = LayerDef(
+    name="sc_dis", filter_fn=lambda p: p.get("sc_dis_ty") in ("01", "02"),
+    supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS,
+)

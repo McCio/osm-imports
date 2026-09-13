@@ -2,6 +2,7 @@
 
 """Tag translation for the DBSN MN_IND (manufatti industriali) layer."""
 
+from dbsn.layer_types import LayerDef
 from dbsn.translate_edifc import _apply_source_tag
 
 TAG_KEYS = [
@@ -67,5 +68,4 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
     return tags
 
 
-from dbsn.layer_types import LayerDef
 LAYER = LayerDef(name="mn_ind", filter_fn=None, supports_extension=True, translate_fn=translate, tag_keys=TAG_KEYS)

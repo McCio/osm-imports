@@ -14,7 +14,6 @@ from shapely.ops import unary_union
 from dbsn import download as _dl
 from dbsn.common import (
     BUILDINGS_DIR,
-    OSM_DIR,
     UNZIPPED_DIR,
     ZIPS_DIR,
     Province,
@@ -99,7 +98,8 @@ def _extend_province(
     for nb in neighbours:
         nb_fgb = fgb_path(nb["code"], nb["date"], "edifc")
         if not nb_fgb.exists():
-            print(f"  [extend ] {p['code']} {p['province']}: extracting neighbour {nb['code']} {nb['province']} (raw)...")
+            print(f"  [extend ] {p['code']} {p['province']}: "
+                  f"extracting neighbour {nb['code']} {nb['province']} (raw)...")
             _extract_province(nb, overwrite=False, extend=False)
         if pre_extracted is not None:
             pre_extracted.add(nb["code"])
@@ -311,10 +311,6 @@ def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
                 if cid and cid in p1_features:
                     shared_nb[cid] = [{"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}]
 
-        if not shared_nb:
-            print(f"  [extend ] {c1} ↔ {c2} ({spec.name}): 0 shared, skipping")
-            continue
-
         _write_ext_fgb(ext_path, p1_schema, p1_features, shared_nb, spec.name)
 
 
@@ -440,7 +436,7 @@ def main() -> None:
     try:
         selected_names = parse_layers(args.layers, all_layer_names)
     except ValueError as exc:
-        import sys as _sys; _sys.exit(f"error: {exc}")
+        sys.exit(f"error: {exc}")
     active_specs = [s for s in get_layer_specs() if selected_names is None or s.name in selected_names]
 
     active_names = [s.name for s in active_specs]

@@ -53,6 +53,9 @@ include = ["dbsn/**/*.py", "iccu/**/*.py", "utils/**/*.py"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "RUF", "SIM", "PTH", "PLC0415"]
 
+[tool.ruff.lint.per-file-ignores]
+"dbsn/common.py" = ["RUF001", "RUF003"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["dbsn", "iccu", "utils"]
 

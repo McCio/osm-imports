@@ -166,7 +166,7 @@ class Pipeline:
                             break
                         except multiprocessing.TimeoutError:
                             if stop.is_set():
-                                raise RuntimeError("pipeline aborted")
+                                raise RuntimeError("pipeline aborted") from None
                 else:
                     task.run()
                 _callback(name, task.weight, Result(name, "done", time.monotonic() - t0))

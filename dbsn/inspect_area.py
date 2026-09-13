@@ -7,8 +7,6 @@ Usage:
 """
 
 import argparse
-import json
-import shutil
 import tempfile
 import zipfile
 from pathlib import Path
@@ -20,7 +18,7 @@ from shapely.ops import polygonize, unary_union
 
 from dbsn.common import ZIPS_DIR, Province, http_client, read_sources
 from dbsn.download import _download_province
-from dbsn.neighbours import _BOUNDARIES_CACHE, _fetch_boundaries
+from dbsn.neighbours import _fetch_boundaries
 
 
 def _province_codes_for_point(lat: float, lon: float) -> list[str]:
@@ -92,7 +90,7 @@ def _search_zip(
         gdb = gdbs[0]
 
         all_layers = fiona.listlayers(str(gdb))
-        layers = [l for l in all_layers if want_layers is None or l in want_layers]
+        layers = [lyr for lyr in all_layers if want_layers is None or lyr in want_layers]
         if want_layers:
             missing = want_layers - set(all_layers)
             if missing:
@@ -138,12 +136,9 @@ def main() -> None:
     # explicit --X sets True; explicit --no-X sets False; None = unset
     explicitly_included = {t for t in all_types if getattr(args, t) is True}
     explicitly_excluded = {t for t in all_types if getattr(args, t) is False}
-    if explicitly_included:
-        geom_filter = explicitly_included  # only what was asked for
-    else:
-        geom_filter = all_types - explicitly_excluded  # default all, minus exclusions
+    geom_filter = explicitly_included or all_types - explicitly_excluded
 
-    want_layers = {l.strip() for l in args.layers.split(",")} if args.layers else None
+    want_layers = {lyr.strip() for lyr in args.layers.split(",")} if args.layers else None
     sources_by_code = {p["code"]: p for p in read_sources()}
 
     if args.province:

@@ -2,6 +2,8 @@
 
 """Tag translation for the DBSN EDI_MIN (minor buildings) layer."""
 
+from dbsn.common import it_titlecase
+from dbsn.layer_types import LayerDef
 from dbsn.translate_edifc import _apply_source_tag
 
 TAG_KEYS = [
@@ -26,8 +28,9 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
 
     tags = {}
 
-    if attrs.get("edi_min_nm", "UNK") != "UNK":
-        tags["name"] = attrs["edi_min_nm"]
+    name = it_titlecase(attrs.get("edi_min_nm", "UNK"))
+    if name:
+        tags["name"] = name
 
     match attrs.get("edi_min_ty"):
         case "01":
@@ -77,5 +80,7 @@ def translate(attrs: dict | None, region: str | None = None) -> dict | None:
     return tags
 
 
-from dbsn.layer_types import LayerDef
-LAYER = LayerDef(name="edi_min", filter_fn=lambda p: p.get("edi_min_pr") == "02", supports_extension=False, translate_fn=translate, tag_keys=TAG_KEYS)
+LAYER = LayerDef(
+    name="edi_min", filter_fn=lambda p: p.get("edi_min_pr") == "02",
+    supports_extension=False, translate_fn=translate, tag_keys=TAG_KEYS,
+)
