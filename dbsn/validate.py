@@ -9,16 +9,17 @@ from utils.dag import Task, run_dag
 from utils.osm_validate import validate_file
 
 
-def _osm_files(p: Province) -> list[str]:
+def _osm_files(p: Province, area: str | None = None) -> list[str]:
+    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
     return [
-        str(OSM_DIR / f"{p['code']}_{p['date']}.{ext}")
+        str(OSM_DIR / f"{p['code']}_{p['date']}{area_slug}.{ext}")
         for ext in ("osm", "osm.bz2")
-        if (OSM_DIR / f"{p['code']}_{p['date']}.{ext}").exists()
+        if (OSM_DIR / f"{p['code']}_{p['date']}{area_slug}.{ext}").exists()
     ]
 
 
-def _validate_province(p: Province, delete_invalid: bool) -> bool | None:
-    paths = _osm_files(p)
+def _validate_province(p: Province, delete_invalid: bool, area: str | None = None) -> bool | None:
+    paths = _osm_files(p, area)
     if not paths:
         print(f"  [skip    ] {p['code']} {p['province']}: OSM not found, run convert first")
         return None
@@ -45,6 +46,7 @@ class ValidateTask(Task):
         fmt: str = "osm",
         compress: bool = True,
         extend: bool = True,
+        area: str | None = None,
     ) -> None:
         self._prov = prov
         self._sources = sources_by_code
@@ -53,6 +55,7 @@ class ValidateTask(Task):
         self._fmt = fmt
         self._compress = compress
         self._extend = extend
+        self._area = area
 
     @property
     def name(self) -> str:
@@ -62,13 +65,14 @@ class ValidateTask(Task):
         print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
 
     def dependencies(self) -> list[Task]:
-        return [ConvertTask(self._prov, self._sources, self._overwrite_steps, self._fmt, self._compress, self._extend)]
+        return [ConvertTask(self._prov, self._sources, self._overwrite_steps, self._fmt, self._compress, self._extend,
+                            area=self._area)]
 
     def skip_if(self) -> bool:
-        return not bool(_osm_files(self._prov))
+        return not bool(_osm_files(self._prov, self._area))
 
     def run(self) -> None:
-        result = _validate_province(self._prov, self._delete_invalid)
+        result = _validate_province(self._prov, self._delete_invalid, self._area)
         if result is False:
             raise RuntimeError(f"validate failed: {self._prov['code']} {self._prov['province']}")
 

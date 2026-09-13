@@ -5,11 +5,17 @@ import csv
 import json
 import os
 import re
+import sys
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import NotRequired, TypedDict
 
+import fiona
 import httpx
+import shapely.ops
+from pyproj import Transformer
+from shapely.geometry import shape as shapely_shape
 
 DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -256,3 +262,48 @@ def parse_layers(raw: str | None, all_names: list[str]) -> list[str] | None:
 
 def _max_date_main() -> None:
     print(max_date())
+
+
+def add_area_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--area",
+        metavar="LOCALITY",
+        help="Filter output to features intersecting this loc_sg locality (e.g. 'Marghera')",
+    )
+
+
+def load_area_clip(p: Province, area_name: str):
+    """Return a WGS84 shapely geometry covering the named loc_sg locality, or None if unavailable."""
+    zip_path = ZIPS_DIR / p["zip_name"]
+    if not zip_path.exists():
+        print(f"  [warn   ] --area: zip not found ({zip_path.name}), skipping area filter", file=sys.stderr)
+        return None
+
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    gdb_inner = next(
+        (re.match(r"^(.*\.gdb)/", n).group(1) for n in names if re.match(r"^.*\.gdb/", n)),
+        None,
+    )
+    if gdb_inner is None:
+        print(f"  [warn   ] --area: no GDB found in {zip_path.name}, skipping area filter", file=sys.stderr)
+        return None
+
+    vsizip_path = f"/vsizip/{zip_path}/{gdb_inner}"
+    try:
+        with fiona.open(vsizip_path, layer="loc_sg") as src:
+            t = Transformer.from_crs(src.crs, "EPSG:4326", always_xy=True)
+            geoms = [
+                shapely.ops.transform(t.transform, shapely_shape(feat["geometry"]))
+                for feat in src
+                if feat["geometry"] and feat["properties"].get("loc_sg_top", "").lower() == area_name.lower()
+            ]
+    except Exception as exc:
+        print(f"  [warn   ] --area: could not read loc_sg ({exc}), skipping area filter", file=sys.stderr)
+        return None
+
+    if not geoms:
+        print(f"  [warn   ] --area: no loc_sg match for '{area_name}', skipping area filter", file=sys.stderr)
+        return None
+
+    return shapely.ops.unary_union(geoms)

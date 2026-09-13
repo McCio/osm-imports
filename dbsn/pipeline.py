@@ -4,7 +4,15 @@ import sys
 
 from dbsn import convert, discover, validate
 from dbsn import neighbours as neighbours_mod
-from dbsn.common import SOURCES_JSON, add_max_weight_arg, filter_provinces, parse_args, parse_overwrite, read_sources
+from dbsn.common import (
+    SOURCES_JSON,
+    add_area_arg,
+    add_max_weight_arg,
+    filter_provinces,
+    parse_args,
+    parse_overwrite,
+    read_sources,
+)
 from dbsn.validate import ValidateTask
 from utils.dag import run_dag
 
@@ -14,6 +22,7 @@ def _extra_args(p) -> None:
     validate._extra_args(p)
     p.add_argument("--neighbours", action="store_true", help="Force re-run of neighbours step")
     p.add_argument("--no-extend", action="store_true", help="Skip cross-boundary extension phase")
+    add_area_arg(p)
     add_max_weight_arg(p)
 
 
@@ -55,6 +64,7 @@ def main() -> None:
             fmt=args.format,
             compress=args.compress,
             extend=not args.no_extend,
+            area=args.area,
         )
         for prov in provinces
     ]
