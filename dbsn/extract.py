@@ -58,12 +58,16 @@ def _write_ext_fgb(
     schema: dict,
     p_features: dict[str, dict],
     shared_nb: dict[str, list[dict]],
+    layer_name: str,
 ) -> None:
-    """Write cross-boundary ext FGB. shared_nb: classid → neighbour feature(s) to union with p's."""
+    """Write cross-boundary ext FGB for one layer. shared_nb: classid → neighbour feature(s) to union with p's."""
     c1, c2 = ext_path.stem.split("_")[:2]
+    # Delete old-format (4-part) ext files and new-format for this layer only
     for stale in BUILDINGS_DIR.glob(f"{c1}_{c2}_*.fgb"):
-        stale.unlink()
-    print(f"  [extend ] {c1} ↔ {c2}: {len(shared_nb)} shared buildings → {rel(ext_path)}")
+        parts = stale.stem.split("_", 4)
+        if len(parts) == 4 or (len(parts) == 5 and parts[4] == layer_name):
+            stale.unlink()
+    print(f"  [extend ] {c1} ↔ {c2} ({layer_name}): {len(shared_nb)} shared → {rel(ext_path)}")
     try:
         with fiona.open(str(ext_path), "w", driver="FlatGeobuf", schema=schema, crs=_WGS84) as dst:
             for cid, nb_feats in shared_nb.items():
@@ -84,7 +88,8 @@ def _extend_province(
     sources_by_code: dict[str, Province],
     pre_extracted: set[str] | None = None,
 ) -> None:
-    """Extension phase: union cross-boundary building fragments and write ext files (edifc only)."""
+    """Extension phase: union cross-boundary fragments for all supports_extension layers."""
+    ext_specs = [s for s in get_layer_specs() if s.supports_extension]
     neighbour_codes: list[str] = p.get("neighbours", [])  # type: ignore[assignment]
     if not neighbour_codes:
         return
@@ -99,48 +104,54 @@ def _extend_province(
         if pre_extracted is not None:
             pre_extracted.add(nb["code"])
 
-    p_fgb = fgb_path(p["code"], p["date"], "edifc")
-    p_schema: dict | None = None
-    p_features: dict[str, dict] = {}
-    with fiona.open(str(p_fgb)) as src:
-        p_schema = {"geometry": "Unknown", "properties": src.schema["properties"]}
-        for feat in src:
-            cid = feat["properties"].get("classid")
-            if cid:
-                p_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
-
-    neighbour_shared: dict[str, dict[str, dict]] = {}
-    for nb in neighbours:
-        nb_fgb = fgb_path(nb["code"], nb["date"], "edifc")
-        if not nb_fgb.exists():
-            print(f"  [warn   ] {p['code']}: neighbour {nb['code']} FGB missing, skipped", file=sys.stderr)
+    for spec in ext_specs:
+        p_fgb = fgb_path(p["code"], p["date"], spec.name)
+        if not p_fgb.exists():
             continue
-        with fiona.open(str(nb_fgb)) as src:
+        p_schema: dict | None = None
+        p_features: dict[str, dict] = {}
+        with fiona.open(str(p_fgb)) as src:
+            p_schema = {"geometry": "Unknown", "properties": src.schema["properties"]}
             for feat in src:
                 cid = feat["properties"].get("classid")
-                if cid and cid in p_features:
-                    neighbour_shared.setdefault(cid, {})[nb["code"]] = {
-                        "geometry": dict(feat["geometry"]),
-                        "properties": dict(feat["properties"]),
-                    }
+                if cid:
+                    p_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
 
-    for nb in neighbours:
-        c1, c2 = sorted([p["code"], nb["code"]])
-        d1 = sources_by_code[c1]["date"]
-        d2 = sources_by_code[c2]["date"]
-        ext_path = BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}.fgb"
-
-        if ext_path.exists() and not overwrite:
-            size = ext_path.stat().st_size // 1024
-            print(f"  [skip   ] ext {c1}_{c2}: {rel(ext_path)} ({size}KB)")
+        if not p_features:
             continue
 
-        shared_with_nb: dict[str, list[dict]] = {
-            cid: list(nb_map.values())
-            for cid, nb_map in neighbour_shared.items()
-            if nb["code"] in nb_map
-        }
-        _write_ext_fgb(ext_path, p_schema, p_features, shared_with_nb)
+        neighbour_shared: dict[str, dict[str, dict]] = {}
+        for nb in neighbours:
+            nb_fgb = fgb_path(nb["code"], nb["date"], spec.name)
+            if not nb_fgb.exists():
+                continue
+            with fiona.open(str(nb_fgb)) as src:
+                for feat in src:
+                    cid = feat["properties"].get("classid")
+                    if cid and cid in p_features:
+                        neighbour_shared.setdefault(cid, {})[nb["code"]] = {
+                            "geometry": dict(feat["geometry"]),
+                            "properties": dict(feat["properties"]),
+                        }
+
+        for nb in neighbours:
+            c1, c2 = sorted([p["code"], nb["code"]])
+            d1 = sources_by_code[c1]["date"]
+            d2 = sources_by_code[c2]["date"]
+            ext_path = BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_{spec.name}.fgb"
+
+            if ext_path.exists() and not overwrite:
+                size = ext_path.stat().st_size // 1024
+                print(f"  [skip   ] ext {c1}_{c2} ({spec.name}): {rel(ext_path)} ({size}KB)")
+                continue
+
+            shared_with_nb: dict[str, list[dict]] = {
+                cid: list(nb_map.values())
+                for cid, nb_map in neighbour_shared.items()
+                if nb["code"] in nb_map
+            }
+            if shared_with_nb:
+                _write_ext_fgb(ext_path, p_schema, p_features, shared_with_nb, spec.name)
 
 
 def _extract_layer(gdb: Path, spec: LayerSpec, out_fgb: Path, t: Transformer) -> int:
@@ -258,46 +269,52 @@ def _extract_province(
 
 
 def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
-    """Write cross-boundary ext FGB for the province pair (edifc only)."""
+    """Write cross-boundary ext FGBs for all supports_extension layers for the province pair."""
+    ext_specs = [s for s in get_layer_specs() if s.supports_extension]
     c1, c2 = (p1["code"], p2["code"]) if p1["code"] < p2["code"] else (p2["code"], p1["code"])
     if p1["code"] != c1:
         p1, p2 = p2, p1
     d1, d2 = p1["date"], p2["date"]
-    ext_path = BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}.fgb"
 
-    if ext_path.exists() and not overwrite:
-        size = ext_path.stat().st_size // 1024
-        print(f"  [skip   ] ext {c1}_{c2}: {rel(ext_path)} ({size}KB)")
-        return
+    for spec in ext_specs:
+        ext_path = BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_{spec.name}.fgb"
 
-    p1_fgb = fgb_path(c1, d1, "edifc")
-    p2_fgb = fgb_path(c2, d2, "edifc")
-    if not p1_fgb.exists() or not p2_fgb.exists():
-        missing = [str(f) for f in (p1_fgb, p2_fgb) if not f.exists()]
-        print(f"  [warn   ] ext {c1}_{c2}: missing FGB(s) {missing}, skipping", file=sys.stderr)
-        return
+        if ext_path.exists() and not overwrite:
+            size = ext_path.stat().st_size // 1024
+            print(f"  [skip   ] ext {c1}_{c2} ({spec.name}): {rel(ext_path)} ({size}KB)")
+            continue
 
-    p1_features: dict[str, dict] = {}
-    p1_schema: dict | None = None
-    with fiona.open(str(p1_fgb)) as src:
-        p1_schema = {"geometry": "Unknown", "properties": src.schema["properties"]}
-        for feat in src:
-            cid = feat["properties"].get("classid")
-            if cid:
-                p1_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
+        p1_fgb = fgb_path(c1, d1, spec.name)
+        p2_fgb = fgb_path(c2, d2, spec.name)
+        if not p1_fgb.exists() or not p2_fgb.exists():
+            missing = [str(f) for f in (p1_fgb, p2_fgb) if not f.exists()]
+            print(f"  [warn   ] ext {c1}_{c2} ({spec.name}): missing FGB(s) {missing}, skipping", file=sys.stderr)
+            continue
 
-    shared_nb: dict[str, list[dict]] = {}
-    with fiona.open(str(p2_fgb)) as src:
-        for feat in src:
-            cid = feat["properties"].get("classid")
-            if cid and cid in p1_features:
-                shared_nb[cid] = [{"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}]
+        p1_features: dict[str, dict] = {}
+        p1_schema: dict | None = None
+        with fiona.open(str(p1_fgb)) as src:
+            p1_schema = {"geometry": "Unknown", "properties": src.schema["properties"]}
+            for feat in src:
+                cid = feat["properties"].get("classid")
+                if cid:
+                    p1_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
 
-    if not shared_nb:
-        print(f"  [extend ] {c1} ↔ {c2}: 0 shared buildings, skipping")
-        return
+        if not p1_features:
+            continue
 
-    _write_ext_fgb(ext_path, p1_schema, p1_features, shared_nb)
+        shared_nb: dict[str, list[dict]] = {}
+        with fiona.open(str(p2_fgb)) as src:
+            for feat in src:
+                cid = feat["properties"].get("classid")
+                if cid and cid in p1_features:
+                    shared_nb[cid] = [{"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}]
+
+        if not shared_nb:
+            print(f"  [extend ] {c1} ↔ {c2} ({spec.name}): 0 shared, skipping")
+            continue
+
+        _write_ext_fgb(ext_path, p1_schema, p1_features, shared_nb, spec.name)
 
 
 class ExtractRawTask(Task):
@@ -379,7 +396,7 @@ class ExtendTask(Task):
             return False
         c1, c2 = self._p1["code"], self._p2["code"]
         d1, d2 = self._p1["date"], self._p2["date"]
-        return (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}.fgb").exists()
+        return (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_edifc.fgb").exists()
 
     def run(self) -> None:
         extend_pair(self._p1, self._p2, overwrite="extend" in self._overwrite_steps)

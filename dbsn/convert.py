@@ -24,15 +24,15 @@ from utils.dag import Task, run_dag
 from utils.writers import translate_features, write_geojson, write_osm_items
 
 
-def _build_override_map(p: Province, sources_by_code: dict[str, Province]) -> dict[str, dict]:
-    """Scan BUILDINGS_DIR for ext files applicable to province p; return classid→geom map."""
-    override_map: dict[str, dict] = {}
+def _build_override_maps(p: Province, sources_by_code: dict[str, Province]) -> dict[str, dict[str, dict]]:
+    """Scan BUILDINGS_DIR for ext files applicable to province p; return {layer: {classid: geom}}."""
+    maps: dict[str, dict[str, dict]] = {}
     for ext_path in BUILDINGS_DIR.glob("*.fgb"):
-        parts = ext_path.stem.split("_")
-        # Ext stem: {C1}_{C2}_{C1date}_{C2date} — exactly 4 parts, first two are 2-letter alpha codes
-        if len(parts) != 4:
+        parts = ext_path.stem.split("_", 4)
+        # Ext stem: {C1}_{C2}_{C1date}_{C2date}_{layer} — split max 4 times; layer may contain underscores
+        if len(parts) != 5:
             continue
-        c1, c2, d1, d2 = parts
+        c1, c2, d1, d2, lname = parts
         if not (len(c1) == 2 and c1.isalpha() and len(c2) == 2 and c2.isalpha()):
             continue
         if not (
@@ -44,8 +44,8 @@ def _build_override_map(p: Province, sources_by_code: dict[str, Province]) -> di
             for feat in src:
                 cid = feat["properties"].get("classid")
                 if cid:
-                    override_map[cid] = dict(feat["geometry"])
-    return override_map
+                    maps.setdefault(lname, {})[cid] = dict(feat["geometry"])
+    return maps
 
 
 def _layer_items(p: Province, layer: LayerDef, region: str, override_map: dict | None = None):
@@ -90,9 +90,10 @@ def _convert_province(
     if out_path.exists():
         out_path.unlink()
 
-    override_map = _build_override_map(p, sources_by_code)
-    if override_map:
-        print(f"  [override] {p['code']} {p['province']}: {len(override_map)} cross-boundary buildings from ext files")
+    override_maps = _build_override_maps(p, sources_by_code)
+    total_overrides = sum(len(v) for v in override_maps.values())
+    if total_overrides:
+        print(f"  [override] {p['code']} {p['province']}: {total_overrides} cross-boundary features from ext files")
 
     region = p.get("region") or ""
     layers_str = ", ".join(ld.name for ld in active)
@@ -109,7 +110,7 @@ def _convert_province(
             with fiona.open(str(out_path), "w", driver="GeoJSON", schema=schema, crs=crs) as dst:
                 schema_props = set(all_tag_keys)
                 for layer in active:
-                    for geom, tags in _layer_items(p, layer, region, override_map):
+                    for geom, tags in _layer_items(p, layer, region, override_maps.get(layer.name)):
                         dst.write({"type": "Feature", "geometry": geom,
                                    "properties": {**{k: None for k in schema_props}, **tags}})
                         total += 1
@@ -125,7 +126,7 @@ def _convert_province(
                       file=sys.stderr)
 
             items = itertools.chain.from_iterable(
-                _layer_items(p, layer, region, override_map) for layer in active
+                _layer_items(p, layer, region, override_maps.get(layer.name)) for layer in active
             )
             count_written = write_osm_items(items, out_path, bounds)
 
