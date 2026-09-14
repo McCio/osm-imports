@@ -17,6 +17,8 @@ dependencies = [
     "phonenumberslite>=9.0,<10",
     "tenacity>=9.0",
     "shapely>=2.0",
+    "scipy>=1.13",
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
@@ -30,6 +32,8 @@ dbsn-neighbours  = "dbsn.neighbours:main"
 dbsn-list-codes  = "dbsn.list_codes:main"
 dbsn-inspect     = "dbsn.inspect_area:main"
 dbsn-max-date    = "dbsn.common:_max_date_main"
+dbsn-conflate    = "dbsn.conflate:main"
+dbsn-triage      = "dbsn.triage:main"
 iccu-download    = "iccu.download:main"
 iccu-clean       = "iccu.clean:main"
 iccu-export      = "iccu.export:main"

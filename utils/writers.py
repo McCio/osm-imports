@@ -27,13 +27,14 @@ def translate_features(src, translate_fn: Callable, overrides: dict | None = Non
         geom = feat["geometry"]
         if geom is None:
             continue
-        if overrides:
-            cid = feat["properties"].get("classid")
-            if cid and cid in overrides:
-                geom = overrides[cid]
+        cid = feat["properties"].get("classid")
+        if overrides and cid and cid in overrides:
+            geom = overrides[cid]
         tags = _safe_tags(translate_fn(dict(feat["properties"])))
         if not tags:
             continue
+        if cid:
+            tags["ref:dbsn"] = cid.strip("{}")
         # GDAL reads GU_CPSurfaceB3D as MultiPolygon even for simple buildings
         if geom["type"] == "MultiPolygon" and len(geom["coordinates"]) == 1:
             geom = {"type": "Polygon", "coordinates": geom["coordinates"][0]}
@@ -106,7 +107,18 @@ def _add_area_relation(
     return all_ways, rel
 
 
-def write_osm_items(items, output_path: Path, bounds=None) -> int:
+def _patch_upload_attr(path: Path, value: str) -> None:
+    """Insert upload="<value>" into the <osm ...> root element."""
+    content = path.read_bytes()
+    tag_start = content.find(b"<osm ")
+    tag_end = content.find(b">", tag_start) if tag_start != -1 else -1
+    if tag_start != -1 and tag_end != -1:
+        path.write_bytes(
+            content[:tag_end] + f' upload="{value}"'.encode() + content[tag_end:]
+        )
+
+
+def write_osm_items(items, output_path: Path, bounds=None, upload: str | None = None) -> int:
     """Write pre-translated (geom, tags) items to an OSM file with shared ID counters."""
     node_ids = count(-1, -1)
     way_ids = count(-1, -1)
@@ -149,6 +161,8 @@ def write_osm_items(items, output_path: Path, bounds=None) -> int:
         for r in rels:
             writer.add_relation(r)
 
+    if upload is not None:
+        _patch_upload_attr(output_path, upload)
     return written
 
 

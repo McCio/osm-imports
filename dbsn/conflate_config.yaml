@@ -1,0 +1,27 @@
+# Numeric parameters for DBSN conflation.
+# Layered: defaults → regions → provinces. CLI flags override all.
+#
+# centroid_distance_m: max centroid-to-centroid distance (metres) for candidate pairs
+# iou_threshold:       min intersection-over-union ratio to confirm a match (0–1)
+# near_miss_iou:       pairs with IoU in [near_miss_iou, iou_threshold) go to _ambiguous for review
+# offset_min_matches:  minimum matched pairs needed before attempting offset detection
+# offset_min_m:        minimum detected offset (metres) before shifting and re-running
+#
+# Per-region or per-province overrides:
+#   regions:
+#     Veneto:
+#       centroid_distance_m: 150
+#   provinces:
+#     PD:
+#       iou_threshold: 0.25
+
+defaults:
+  centroid_distance_m: 100
+  iou_threshold: 0.3
+  near_miss_iou: 0.05
+  offset_min_matches: 20
+  offset_min_m: 5.0
+
+regions: {}
+
+provinces: {}

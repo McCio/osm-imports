@@ -85,8 +85,13 @@ UNZIPPED_DIR = DATA_DIR / "unzipped"
 BUILDINGS_DIR = DATA_DIR / "buildings"
 OSM_DIR = DATA_DIR / "osm"
 
+CONFLATE_DIR = DATA_DIR / "conflate"
+
 EXCLUDE_META_IST: frozenset[str] = frozenset(("03", "21", "23"))
-OVERWRITE_STEPS: tuple[str, ...] = ("discover", "neighbours", "download", "extract", "extend", "convert", "validate")
+OVERWRITE_STEPS: tuple[str, ...] = (
+    "discover", "neighbours", "download", "extract", "extend", "convert", "validate",
+    "pbf", "conflate",
+)
 
 IGM_DOWNLOAD_URL = (
     "https://igmi.esercito.difesa.it/servizi/database-di-sintesi-nazionale/database-di-sintesi-nazionale-download/"

@@ -128,6 +128,73 @@ Current overrides:
 |---|---|
 | Umbria | `edifc_mon=01` → `historic=monument` + `fixme:building` |
 
+### Conflation
+
+The conflation step matches DBSN building footprints against existing OSM features in the same area, produces a change file ready for upload, and flags cases that need human review.
+
+#### Running
+
+```bash
+uv run dbsn-conflate --province VE --area Marghera
+```
+
+The PBF for the province is downloaded automatically if not already present. Output goes to `data/dbsn/conflate/{CODE}_{date}_{area}/`.
+
+#### Output files
+
+| File | Contents |
+|---|---|
+| `_changes.osc` | OSC change file: `create` for new buildings, `modify` for tag updates. Deletes are only emitted when a triage decision explicitly requests one (see below). |
+| `_new.osm` | DBSN features with no OSM match — will be created on upload |
+| `_ambiguous.osm` | Feature pairs that need human review (see below) |
+| `_osm_only.osm` | OSM features with no DBSN match (kept for reference; not in the change file) |
+| `_resolutions.json` | Append-only decision log written by `dbsn-triage` |
+
+#### What goes to `_ambiguous.osm`
+
+- **Near-miss pairs**: IoU below the match threshold but above `near_miss_iou` — geometrically close but not confident enough to auto-match.
+- **N:M pairs**: multiple DBSN features match multiple OSM features (complex overlap).
+- **Shared-node cases**: the matched OSM way shares nodes with adjacent ways — replacing its geometry would break connectivity.
+
+Every OSM feature in `_ambiguous.osm` carries `osm:id=<original_osm_id>` (e.g. `osm:id=w138864508`) so decisions survive the file-level ID renumbering. Every DBSN feature carries `ref:dbsn=<classid>`.
+
+Shared-node cases also carry:
+- `note:conflate` — `osm_ref=<id>,shared_nodes:<count>` summary
+- `note:conflate:shared_node_ids` — comma-separated node IDs that are shared
+
+#### Reviewing `_ambiguous.osm` in JOSM
+
+1. Open `_ambiguous.osm` and the area PBF as separate layers.
+2. For shared-node cases: look up the `note:conflate:shared_node_ids` values in the PBF layer to see which adjacent ways use those nodes.
+3. Decide for each pair and edit `_ambiguous.osm` accordingly:
+
+| Decision | Action in JOSM | What `dbsn-triage` records | Effect on next run's `.osc` |
+|---|---|---|---|
+| Accept auto-merged tags; keep OSM geometry | Delete the DBSN feature (`ref:dbsn=…`) | `keep_osm` | Pair excluded from future ambiguous; no new OSC action (initial tag modify already emitted) |
+| Replace with DBSN geometry | Delete the OSM feature (`osm:id=…`) | `replace` | Delete old OSM way + create DBSN geometry |
+| Delete the OSM feature (e.g. demolished building) | Delete both features | `delete` | Delete old OSM way |
+| Override tags yourself | Keep both; edit tags on the OSM feature | `tag_update` | Modify OSM way with your edited tags (overrides auto-merge) |
+
+4. Save as `{stem}_resolved.osm` (same directory, same name with `_resolved` suffix).
+5. Run `dbsn-triage _ambiguous.osm` → writes decisions to `_resolutions.json`.
+
+> **Note on shared nodes and "carry with you":** if you want to replace the OSM geometry but keep shared-node connectivity, you must manually snap the DBSN outline to the shared nodes in JOSM (keeping the OSM feature, editing its node positions), then save it in `_resolved.osm`. Triage will record a `tag_update`. The geometry change is yours to upload separately — the `.osc` only carries tag modifications in this case.
+
+#### Reviewing `_new.osm` in JOSM
+
+New features are auto-created on upload. To suppress a new building (e.g. it was demolished and OSM is already correct):
+
+1. Open `_new.osm`.
+2. Delete the features you do **not** want created.
+3. Save as `{stem}_new_resolved.osm`.
+4. Run `dbsn-triage _new.osm` → writes `decision=skip` for each removed feature.
+
+On the next conflation run, skipped DBSN IDs are excluded from `_new.osm`.
+
+#### Re-running after triage
+
+`_resolutions.json` is read automatically on the next `dbsn-conflate` run. Resolved pairs are excluded from `_ambiguous.osm`; `replace` decisions update the OSC; `skip` decisions suppress new-feature creation.
+
 ### Based on
 
 - [Danysan1/dbsn-import](https://github.com/Danysan1/dbsn-import): province source list and download URLs
