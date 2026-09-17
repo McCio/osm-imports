@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from shapely.geometry import box
 
-from dbsn.conflate import is_zero_delta
+from dbsn.conflate import is_zero_delta, josm_load_urls
 from dbsn.match import match_features
 from dbsn.tag_merge import merge_tags
 
@@ -75,6 +75,31 @@ def test_shape_match_rejects_different_size():
     assert result.shape_matched == []
     assert result.dbsn_only == ["d1"]
     assert result.osm_only == ["w1"]
+
+
+# ---------------------------------------------------------------------------
+# JOSM remote control URL building
+# ---------------------------------------------------------------------------
+
+def test_josm_load_urls_builds_one_url_per_layer(tmp_path):
+    from urllib.parse import quote
+    pbf = tmp_path / "VE.osm.pbf"
+    pbf.touch()
+    amb = tmp_path / "VE_ambiguous.osm"
+    amb.touch()
+    urls = josm_load_urls([("osm-estratti", pbf), ("ambiguous", amb)], host="localhost:8111")
+    assert len(urls) == 2
+    assert urls[0].startswith("http://localhost:8111/import?")
+    assert "layer_name=osm-estratti" in urls[0]
+    # expected URL derived from the same resolve() the impl performs — portable
+    assert f"url={quote(pbf.resolve().as_uri(), safe='')}" in urls[0]
+    assert "new_layer=true" in urls[0]
+    assert "layer_name=ambiguous" in urls[1]
+
+
+def test_josm_load_urls_escapes_layer_name(tmp_path):
+    urls = josm_load_urls([("a b&c", tmp_path / "x.osm")], host="h")
+    assert "layer_name=a%20b%26c" in urls[0]
 
 
 def test_match_greedy_best_iou_wins():

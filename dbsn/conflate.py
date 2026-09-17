@@ -41,6 +41,25 @@ _HERE = Path(__file__).parent
 _SPECIFICITY_FILE = _HERE / "tag_specificity.yaml"
 _CONFIG_FILE = _HERE / "conflate_config.yaml"
 
+def josm_load_urls(layers: list[tuple[str, Path]], host: str) -> list[str]:
+    """Remote-control URLs that import each (layer_name, path) as a new JOSM layer.
+
+    Uses the /import endpoint (verified against JOSM 19613: it accepts file://
+    URLs; /load_data wants inline data= and rejects file URLs).
+    host includes the port, e.g. "localhost:8111".
+    """
+    from urllib.parse import quote, urlencode
+    urls = []
+    for name, path in layers:
+        params = urlencode({
+            "new_layer": "true",
+            "layer_name": name,
+            "url": Path(path).resolve().as_uri(),
+        }, quote_via=quote)
+        urls.append(f"http://{host}/import?{params}")
+    return urls
+
+
 def is_zero_delta(
     iou: float,
     merged: dict,
@@ -992,6 +1011,12 @@ def _extra_args(parser) -> None:
         "--review-identical", dest="review_identical", action="store_true",
         help="Keep zero-delta matches (IoU≥identical_iou, no tag changes) in _conflated.osm",
     )
+    parser.add_argument(
+        "--josm", nargs="?", const="localhost:8111", metavar="HOST:PORT",
+        help="After conflation, open review files + PBF in JOSM via remote control; "
+             "optional HOST:PORT (default: localhost:8111). PBF layer is reference "
+             "only — no lock available via remote control",
+    )
 
 
 def main() -> None:
@@ -1013,6 +1038,54 @@ def main() -> None:
         for prov in args.provinces
     ]
     run_dag(tasks, args.max_weight)
+
+    if args.josm:
+        _josm_open(args.provinces, args.area, args.josm)
+
+
+def _josm_open(provinces: list, area: str | None, host: str) -> None:
+    """Open conflate review files + PBF as JOSM layers via remote control."""
+    import urllib.request
+    from urllib.error import URLError
+
+    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
+    pbf_slug = _pbf_normalize(area) if area else ""
+    for p in provinces:
+        code, date = p["code"], p["date"]
+        pbf = find_pbf(code, pbf_slug)
+        layers = []
+        if pbf is not None:
+            # /import cannot read PBF binary — convert to .osm XML (cached next to it)
+            xml = pbf.with_suffix(".osm")
+            if not xml.exists() or xml.stat().st_mtime < pbf.stat().st_mtime:
+                import subprocess
+                result = subprocess.run(
+                    ["osmium", "cat", str(pbf), "-o", str(xml)],
+                    check=False, capture_output=True, text=True,
+                )
+                if result.returncode != 0:
+                    print(f"  [josm   ] {code}: osmium cat failed "
+                          f"(exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+                    xml = pbf  # attempt PBF import anyway
+            if xml.exists():
+                layers.append((f"osm-estratti {code}", xml))
+        for suffix, label in (("_ambiguous.osm", "ambiguous"), ("_new.osm", "new"),
+                              ("_osm_only.osm", "osm-only"), ("_conflated.osm", "conflated")):
+            out = _out(code, date, suffix, area_slug)
+            if out.exists():
+                layers.append((f"{label} {code}", out))
+        if not layers:
+            continue
+        try:
+            for url in josm_load_urls(layers, host):
+                urllib.request.urlopen(url, timeout=5).close()
+            print(f"  [josm   ] {code}: opened {len(layers)} layers in JOSM "
+                  f"(new layers each run — close stale ones)")
+        except (URLError, OSError):
+            print(f"  [josm   ] {code}: JOSM remote control not reachable at {host} "
+                  f"(enable it in JOSM preferences), open manually:", file=sys.stderr)
+            for name, path in layers:
+                print(f"           {name}: {path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
