@@ -166,30 +166,24 @@ Shared-node cases also carry:
 
 1. Open `_ambiguous.osm` and the area PBF as separate layers.
 2. For shared-node cases: look up the `note:conflate:shared_node_ids` values in the PBF layer to see which adjacent ways use those nodes.
-3. Decide for each pair and edit `_ambiguous.osm` accordingly:
+3. Run `uv run dbsn-triage <path>/_ambiguous.osm` and decide each feature interactively (paste `ref:dbsn=…` values straight from JOSM for batch triage):
 
-| Decision | Action in JOSM | What `dbsn-triage` records | Effect on next run's `.osc` |
-|---|---|---|---|
-| Accept auto-merged tags; keep OSM geometry | Delete the DBSN feature (`ref:dbsn=…`) | `keep_osm` | Pair excluded from future ambiguous; no new OSC action (initial tag modify already emitted) |
-| Replace with DBSN geometry | Delete the OSM feature (`osm:id=…`) | `replace` | Delete old OSM way + create DBSN geometry |
-| Delete the OSM feature (e.g. demolished building) | Delete both features | `delete` | Delete old OSM way |
-| Override tags yourself | Keep both; edit tags on the OSM feature | `tag_update` | Modify OSM way with your edited tags (overrides auto-merge) |
+| Decision | Effect on next run's `.osc` |
+|---|---|
+| `keep_osm` | Pair excluded from future ambiguous; no new OSC action (initial tag modify already emitted) |
+| `replace` | Delete old OSM way + create DBSN geometry |
+| `delete` | Delete old OSM way |
+| `tag_update` | Modify OSM way with your chosen tags (overrides auto-merge) |
 
-4. Save as `{stem}_resolved.osm` (same directory, same name with `_resolved` suffix).
-5. Run `dbsn-triage _ambiguous.osm` → writes decisions to `_resolutions.json`.
-
-> **Note on shared nodes and "carry with you":** if you want to replace the OSM geometry but keep shared-node connectivity, you must manually snap the DBSN outline to the shared nodes in JOSM (keeping the OSM feature, editing its node positions), then save it in `_resolved.osm`. Triage will record a `tag_update`. The geometry change is yours to upload separately — the `.osc` only carries tag modifications in this case.
+On save, decisions are written to `_resolutions.json` and conflation re-runs automatically.
 
 #### Reviewing `_new.osm` in JOSM
 
-New features are auto-created on upload. To suppress a new building (e.g. it was demolished and OSM is already correct):
+New features are auto-created on upload. To suppress a new building (e.g. it was demolished and OSM is already correct), record `skip` interactively in `dbsn-triage` — look it up via `dbsn:<classid>` or batch-paste `ref:dbsn=…` values straight from JOSM. On the next conflation run, skipped DBSN IDs are excluded from `_new.osm`.
 
-1. Open `_new.osm`.
-2. Delete the features you do **not** want created.
-3. Save as `{stem}_new_resolved.osm`.
-4. Run `dbsn-triage _new.osm` → writes `decision=skip` for each removed feature.
+#### Reviewing `_osm_only.osm`
 
-On the next conflation run, skipped DBSN IDs are excluded from `_new.osm`.
+Look features up in `dbsn-triage` (`osm:wXXX`) and record `delete` or `tag_update` interactively.
 
 #### Re-running after triage
 

@@ -1,4 +1,4 @@
-"""dbsn-triage: diff ambiguous.osm vs resolved.osm, classify decisions, update resolutions.json."""
+"""dbsn-triage: interactive decision recorder for ambiguous/new conflation output."""
 
 from __future__ import annotations
 
@@ -20,64 +20,6 @@ def _is_conflate_meta(k: str) -> bool:
     return k.startswith("note:") or k in _TRIAGE_SKIP
 
 
-def triage(
-    ambiguous: list[dict],
-    resolved: list[dict],
-    existing: dict,
-) -> dict:
-    """Compute resolution decisions by diffing ambiguous vs resolved feature lists.
-
-    OSM features are identified by their 'osm:id' tag (original OSM ID, e.g. 'w138859484').
-    DBSN features are identified by their 'ref:dbsn' tag.
-    File-level IDs are re-assigned by write_osm_items and cannot be used for cross-run matching.
-    """
-    # Build resolved lookups by original ID (tag-based, not file-ID-based)
-    resolved_osm_ids = {f["tags"]["osm:id"] for f in resolved if "osm:id" in f["tags"]}
-    resolved_dbsn_ids = {f["tags"]["ref:dbsn"] for f in resolved if "ref:dbsn" in f["tags"]}
-    resolved_by_osm_id = {f["tags"]["osm:id"]: f for f in resolved if "osm:id" in f["tags"]}
-
-    new_decisions: dict = {}
-
-    for feat in ambiguous:
-        osm_id = feat["tags"].get("osm:id")
-        if not osm_id:
-            continue  # DBSN features — decisions are derived from their paired OSM feature
-
-        dbsn_classid = feat["tags"].get("ref:dbsn")
-        osm_deleted = osm_id not in resolved_osm_ids
-
-        if osm_deleted:
-            if dbsn_classid and dbsn_classid in resolved_dbsn_ids:
-                # OSM gone, DBSN still present → replace OSM with DBSN geometry
-                new_decisions[osm_id] = {"decision": "replace", "dbsn_classid": dbsn_classid}
-            elif dbsn_classid:
-                # Both gone → delete
-                new_decisions[osm_id] = {"decision": "delete"}
-            else:
-                # No DBSN pair, OSM deleted → keep_osm (mapper removed DBSN explicitly)
-                new_decisions[osm_id] = {"decision": "keep_osm"}
-        else:
-            # OSM still present
-            if dbsn_classid and dbsn_classid not in resolved_dbsn_ids:
-                new_decisions[osm_id] = {"decision": "keep_osm", "dbsn_classid": dbsn_classid}
-            elif osm_id in resolved_by_osm_id:
-                # Both present — check for tag changes; ignore all conflation metadata
-                orig_tags = {k: v for k, v in feat["tags"].items() if not _is_conflate_meta(k)}
-                new_tags = {k: v for k, v in resolved_by_osm_id[osm_id]["tags"].items()
-                            if not _is_conflate_meta(k)}
-                changed = {k: v for k, v in new_tags.items() if orig_tags.get(k) != v}
-                removed = {k for k in orig_tags if k not in new_tags}
-                if changed or removed:
-                    rec: dict = {"decision": "tag_update", "tags": new_tags}
-                    if dbsn_classid:
-                        rec["dbsn_classid"] = dbsn_classid
-                    new_decisions[osm_id] = rec
-
-    result = dict(existing)
-    result.update(new_decisions)
-    return result
-
-
 def _parse_osm_features(path: Path) -> list[dict]:
     """Parse OSM XML file into a list of feature dicts with 'id' and 'tags' keys."""
     features: list[dict] = []
@@ -90,26 +32,6 @@ def _parse_osm_features(path: Path) -> list[dict]:
         tags = {t.attrib["k"]: t.attrib["v"] for t in elem if t.tag == "tag"}
         features.append({"id": fid, "tags": tags})
     return features
-
-
-def triage_new(
-    new: list[dict],
-    resolved: list[dict],
-    existing: dict,
-) -> dict:
-    """Compute skip decisions by diffing _new.osm vs _new_resolved.osm.
-
-    Features removed from resolved (matched by ref:dbsn tag) get decision=skip.
-    """
-    resolved_dbsn_ids = {f["tags"].get("ref:dbsn") for f in resolved if f["tags"].get("ref:dbsn")}
-    new_decisions: dict = {}
-    for feat in new:
-        dbsn_id = feat["tags"].get("ref:dbsn")
-        if dbsn_id and dbsn_id not in resolved_dbsn_ids:
-            new_decisions[f"dbsn:{dbsn_id}"] = {"decision": "skip"}
-    result = dict(existing)
-    result.update(new_decisions)
-    return result
 
 
 def _run_conflate(province_code: str, area_arg: str | None) -> int:
@@ -176,7 +98,10 @@ def _fmt_resolution(rec: dict | None) -> str:
 def _interactive_main(ambiguous_path: Path, resolutions_path: Path,
                       province_code: str, area_arg: str | None) -> None:
     dir_ = ambiguous_path.parent
-    base = ambiguous_path.stem.removesuffix("_ambiguous")
+    stem = ambiguous_path.stem
+    for suf in ("_ambiguous", "_osm_only", "_new", "_conflated"):
+        stem = stem.removesuffix(suf)
+    base = stem
     new_path = dir_ / f"{base}_new.osm"
     osm_only_path = dir_ / f"{base}_osm_only.osm"
     conflated_path = dir_ / f"{base}_conflated.osm"
@@ -760,10 +685,8 @@ def _interactive_main(ambiguous_path: Path, resolutions_path: Path,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Triage DBSN conflation decisions")
-    parser.add_argument("source", help="Path to _ambiguous.osm or _new.osm")
-    parser.add_argument("-i", "--interactive", action="store_true",
-                        help="Interactive decision mode (no resolved file needed)")
+    parser = argparse.ArgumentParser(description="Triage DBSN conflation decisions (interactive)")
+    parser.add_argument("source", help="Path to _ambiguous.osm, _new.osm or _osm_only.osm")
     args = parser.parse_args()
 
     source_path = Path(args.source)
@@ -774,41 +697,7 @@ def main() -> None:
     base_stem, province_code, area_arg = _base_stem_parts(source_path.stem)
     resolutions_path = source_path.with_name(f"{base_stem}_resolutions.json")
 
-    if args.interactive:
-        ambiguous_path = source_path.with_name(f"{base_stem}_ambiguous.osm")
-        if not ambiguous_path.exists():
-            ambiguous_path = source_path  # caller passed ambiguous.osm directly
-        _interactive_main(ambiguous_path, resolutions_path, province_code, area_arg)
-        return
-
-    # Non-interactive: diff source vs resolved file
-    is_new = source_path.stem.endswith("_new")
-    resolved_path = source_path.with_name(
-        f"{base_stem}_new_resolved.osm" if is_new else f"{base_stem}_resolved.osm"
-    )
-    if not resolved_path.exists():
-        print(f"Error: {resolved_path} not found — save your JOSM edits as this file first",
-              file=sys.stderr)
-        sys.exit(1)
-
-    source = _parse_osm_features(source_path)
-    resolved = _parse_osm_features(resolved_path)
-    existing: dict = {}
-    if resolutions_path.exists():
-        existing = json.loads(resolutions_path.read_text(encoding="utf-8"))
-
-    updated = triage_new(source, resolved, existing) if is_new else triage(source, resolved, existing)
-
-    new_count = len(updated) - len(existing)
-    overwrite_count = sum(1 for k, v in updated.items() if k in existing and existing[k] != v)
-
-    resolutions_path.write_text(json.dumps(updated, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"  [triage ] {province_code}: {new_count} new, {overwrite_count} revised → {resolutions_path.name}")
-
-    rc = _run_conflate(province_code, area_arg)
-    if rc != 0:
-        print(f"  [warn   ] {province_code}: conflate re-run failed — re-run manually", file=sys.stderr)
-        sys.exit(rc)
+    _interactive_main(source_path, resolutions_path, province_code, area_arg)
 
 
 if __name__ == "__main__":
