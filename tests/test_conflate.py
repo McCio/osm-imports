@@ -55,6 +55,28 @@ def test_match_reports_per_pair_iou():
     assert abs(iou - inter / union) < 1e-9
 
 
+def test_shape_match_pairs_shifted_identical_building():
+    # IoU far below near-miss band → both unmatched by IoU; identical shape,
+    # displacement within centroid gate + shape_extra_distance_m
+    dbsn = [("d1", box(0.98, 0, 1.98, 1))]
+    osm = [("w1", box(0, 0, 1, 1))]
+    cfg = {**_CFG, "shape_extra_distance_m": 150_000}
+    result = match_features(dbsn, osm, cfg)
+    assert result.shape_matched == [("d1", "w1")]
+    assert result.dbsn_only == []
+    assert result.osm_only == []
+
+
+def test_shape_match_rejects_different_size():
+    dbsn = [("d1", box(0.98, 0, 2.98, 2))]  # 4x area of OSM box
+    osm = [("w1", box(0, 0, 1, 1))]
+    cfg = {**_CFG, "shape_extra_distance_m": 150_000}
+    result = match_features(dbsn, osm, cfg)
+    assert result.shape_matched == []
+    assert result.dbsn_only == ["d1"]
+    assert result.osm_only == ["w1"]
+
+
 def test_match_greedy_best_iou_wins():
     osm_box = box(0, 0, 1, 1)
     # d1 almost identical to osm_box (high IoU), d2 overlaps less

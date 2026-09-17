@@ -8,6 +8,15 @@
 # offset_min_m:        minimum detected offset (metres) before shifting and re-running
 # identical_iou:       IoU above which a no-tag-change match is "identical" and dropped
 #                      from _conflated.osm (keep via --review-identical)
+# shape_extra_distance_m: shape-signature second chance gate, in percent of feature
+#                      size (sqrt of area): 100 = centroid may drift up to 1× building
+#                      size, 0 = disabled. Scales with feature size — small-shed
+#                      coincidences 200 m away stay out, large-feature drift stays in.
+#                      Same area/perimeter/vertex count, no overlap → ambiguous as
+#                      shape_match, suggest=replace
+# shape_area_tolerance / shape_perimeter_tolerance: relative tolerance (0–1)
+# shape_vertex_ratio:  max ratio of exterior vertex counts (cadastral detail vs
+#                      simplified hand-traced)
 #
 # Per-region or per-province overrides:
 #   regions:
@@ -24,6 +33,7 @@ defaults:
   offset_min_matches: 20
   offset_min_m: 5.0
   identical_iou: 0.95
+  shape_extra_distance_m: 100
 
 regions: {}
 

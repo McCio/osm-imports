@@ -763,6 +763,18 @@ def _run(
         ambiguous.append(({**osm_tags, "osm:id": osm_id,
                            "note:conflate": f"near_miss,dbsn={dbsn_id}"}, osm_geom))
 
+    # Shape-signature matches (same shape, no overlap) → ambiguous, suggest replace
+    for dbsn_id, osm_id in result.shape_matched:
+        dbsn_tags = dbsn_tags_by_id[dbsn_id]
+        osm_tags, osm_geom, _ = osm_by_id[osm_id]
+        ambiguous.append(({**dbsn_tags, "ref:dbsn": dbsn_id,
+                           "note:conflate": f"shape_match,osm={osm_id},suggest=replace"},
+                          dbsn_geom_by_id[dbsn_id]))
+        ambiguous.append(({**osm_tags, "osm:id": osm_id,
+                           "note:conflate": f"shape_match,dbsn={dbsn_id},suggest=replace"}, osm_geom))
+    if result.shape_matched:
+        print(f"  [shape  ] {code}: {len(result.shape_matched)} shape-signature pairs → ambiguous")
+
     # Unmatched OSM → osm_only (N:1 containment check: OSM feature inside a matched DBSN)
     containment_threshold = config.get("containment_threshold", 0.8)
     _matched_dbsn_ids = [did for did, _ in result.matched]

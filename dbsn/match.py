@@ -15,6 +15,7 @@ class MatchResult:
     osm_only: list[str] = field(default_factory=list)
     ambiguous: list[tuple[list[str], list[str]]] = field(default_factory=list)  # ([dbsn_ids], [osm_ids])
     near_miss: list[tuple[str, str]] = field(default_factory=list)  # (dbsn_id, osm_id) — below threshold
+    shape_matched: list[tuple[str, str]] = field(default_factory=list)  # same shape, no overlap — review pair
     matched_ious: dict[tuple[str, str], float] = field(default_factory=dict)  # (dbsn_id, osm_id) → IoU
     detected_offset: tuple[float, float, float] | None = None  # (dx_deg, dy_deg, dist_m)
 
@@ -37,6 +38,7 @@ def match_features(
 
     # Degree-to-metre approximation: 1° ≈ 111_000 m (good enough for centroid gate)
     base_max_deg = max_m / 111_000
+    _D2M = 111_000
 
     osm_ids = [oid for oid, _ in osm]
     osm_geoms = [g for _, g in osm]
@@ -104,6 +106,64 @@ def match_features(
 
     result.dbsn_only = [dbsn[i][0] for i in range(len(dbsn)) if i not in used_dbsn]
     result.osm_only = [osm_ids[i] for i in range(len(osm)) if i not in used_osm]
+
+    # Shape-signature second chance: unmatched pairs with near-identical shape
+    # (area, perimeter, vertex count) but disjoint/near-disjoint geometry —
+    # same building, badly traced in OSM. Surfaced for review, never auto-replaced.
+    # Distance gate = normal size-aware centroid gate + shape_extra_distance_m.
+    shape_extra_m = config.get("shape_extra_distance_m", 0)
+    if shape_extra_m > 0 and result.dbsn_only and result.osm_only:
+        area_tol = config.get("shape_area_tolerance", 0.15)
+        perim_tol = config.get("shape_perimeter_tolerance", 0.15)
+        # vertex counts as ratio, not absolute: cadastral geometry carries
+        # notches/right-angle detail a hand-traced OSM way won't have
+        vertex_ratio = config.get("shape_vertex_ratio", 2.0)
+
+        def _vertices(g):
+            # total exterior-ring vertex count (holes rare on buildings);
+            # handles Polygon, MultiPolygon and GeometryCollection
+            if hasattr(g, "geoms"):
+                return sum(_vertices(p) for p in g.geoms)
+            if hasattr(g, "exterior"):
+                return len(g.exterior.coords)
+            return 0
+
+        db_unmatched_idx = [i for i in range(len(dbsn)) if i not in used_dbsn]
+        osm_unmatched_idx = [i for i in range(len(osm)) if i not in used_osm]
+        if any(_vertices(dbsn[i][1]) for i in db_unmatched_idx):
+            un_tree = STRtree([osm_geoms[i] for i in osm_unmatched_idx])
+            shape_used_osm: set[int] = set()
+            for di in db_unmatched_idx:
+                dg = dbsn[di][1]
+                dv = _vertices(dg)
+                if dv == 0:
+                    continue
+                # gate scales purely with feature size (no 100 m floor — that would
+                # let an 8 m² shed match its twin 200 m away): multiplier 100 = 1×
+                # characteristic size (sqrt of area in m)
+                size_m = (dg.area * _D2M * _D2M) ** 0.5
+                gate = size_m * shape_extra_m / 100 * _DEG_PER_M
+                for hi in un_tree.query(dg.centroid.buffer(gate)):
+                    oi = osm_unmatched_idx[hi]
+                    if oi in shape_used_osm:
+                        continue
+                    og = osm_geoms[oi]
+                    ov = _vertices(og)
+                    if ov == 0 or max(dv, ov) / min(dv, ov) > vertex_ratio:
+                        continue
+                    if abs(dg.area - og.area) > area_tol * max(dg.area, og.area):
+                        continue
+                    if abs(dg.length - og.length) > perim_tol * max(dg.length, og.length):
+                        continue
+                    result.shape_matched.append((dbsn[di][0], osm_ids[oi]))
+                    shape_used_osm.add(oi)
+                    used_dbsn.add(di)
+                    break
+            # Re-filter unmatched lists: shape-matched features leave both pools
+            db_shape_ids = {d for d, _ in result.shape_matched}
+            osm_shape_ids = {o for _, o in result.shape_matched}
+            result.dbsn_only = [d for d in result.dbsn_only if d not in db_shape_ids]
+            result.osm_only = [o for o in result.osm_only if o not in osm_shape_ids]
 
     # Offset detection: if enough matches, compute median centroid delta
     min_matches = config.get("offset_min_matches", 20)
