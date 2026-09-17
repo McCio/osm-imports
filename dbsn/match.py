@@ -15,6 +15,7 @@ class MatchResult:
     osm_only: list[str] = field(default_factory=list)
     ambiguous: list[tuple[list[str], list[str]]] = field(default_factory=list)  # ([dbsn_ids], [osm_ids])
     near_miss: list[tuple[str, str]] = field(default_factory=list)  # (dbsn_id, osm_id) — below threshold
+    matched_ious: dict[tuple[str, str], float] = field(default_factory=dict)  # (dbsn_id, osm_id) → IoU
     detected_offset: tuple[float, float, float] | None = None  # (dx_deg, dy_deg, dist_m)
 
 
@@ -81,6 +82,7 @@ def match_features(
         if di in used_dbsn or oi in used_osm:
             continue
         result.matched.append((dbsn[di][0], osm_ids[oi]))
+        result.matched_ious[(dbsn[di][0], osm_ids[oi])] = scores[(di, oi)]
         used_dbsn.add(di)
         used_osm.add(oi)
 

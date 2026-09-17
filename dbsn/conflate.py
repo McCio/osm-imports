@@ -41,6 +41,19 @@ _HERE = Path(__file__).parent
 _SPECIFICITY_FILE = _HERE / "tag_specificity.yaml"
 _CONFIG_FILE = _HERE / "conflate_config.yaml"
 
+def is_zero_delta(
+    iou: float,
+    merged: dict,
+    osm_tags: dict,
+    identical_iou: float = 0.95,
+) -> bool:
+    """True when a 1:1 match adds nothing: high IoU and merged tags equal OSM's.
+
+    These matches are noise for review and are dropped from _conflated.osm.
+    """
+    return iou >= identical_iou and merged == osm_tags
+
+
 def _load_specificity() -> dict[str, list[str]]:
     with _SPECIFICITY_FILE.open(encoding="utf-8") as f:
         return yaml.safe_load(f)
@@ -519,6 +532,7 @@ def _run(
     area: str | None,
     config: dict,
     specificity: dict[str, list[str]],
+    review_identical: bool = False,
 ) -> None:
     code, date = p["code"], p["date"]
     area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
@@ -659,6 +673,7 @@ def _run(
     osc_node_deletes: list[tuple[int, int]] = []             # (node_id, ver)
     osc_geom_modifies: list[tuple[str, int, list[int], dict]] = []  # (osm_id, ver, nd_refs, tags)
     next_node_id = [-1]  # shared counter; geometry updates decrement first
+    n_identical = 0  # zero-delta matches dropped from review
 
     def _shared_node_info(osm_id: str) -> tuple[int, str]:
         """Return (count, comma-separated ids) of shared nodes for an OSM way."""
@@ -685,6 +700,15 @@ def _run(
 
         merged, conflicts = merge_tags(dbsn_tags, osm_tags, specificity)
         merged = _normalise_osm_tags(merged)
+
+        # Zero-delta match: DBSN adds nothing (tags identical, near-identical geometry).
+        # Dropped from review; --review-identical keeps them in _conflated.osm.
+        if not review_identical and not conflicts and not merge_note \
+                and is_zero_delta(result.matched_ious.get((dbsn_id, osm_id), 0.0), merged, osm_tags,
+                                  identical_iou=config.get("identical_iou", 0.95)):
+            n_identical += 1
+            continue
+
         review_tags = {**merged, "ref:dbsn": dbsn_id, "note:conflate": f"osm={osm_id}{merge_note}"}
 
         if conflicts:
@@ -877,6 +901,7 @@ def _run(
         f"conflated={n_conflated} ambiguous={n_ambiguous} "
         f"osc=({len(osc_all_creates)} create, {len(osc_way_tag_modifies)} tag-modify, "
         f"{n_geom} geom-modify, {len(osc_way_deletes)} delete)"
+        + (f" identical_dropped={n_identical}" if n_identical else "")
     )
 
 
@@ -894,6 +919,7 @@ class ConflateTask(Task):
         fmt: str = "osm",
         compress: bool = False,
         extend: bool = True,
+        review_identical: bool = False,
     ) -> None:
         self._prov = prov
         self._sources = sources_by_code
@@ -902,6 +928,7 @@ class ConflateTask(Task):
         self._fmt = fmt
         self._compress = compress
         self._extend = extend
+        self._review_identical = review_identical
 
     @property
     def name(self) -> str:
@@ -929,7 +956,8 @@ class ConflateTask(Task):
         p = self._prov
         config = _load_config(p["code"], p.get("region", ""))
         specificity = _load_specificity()
-        _run(p, "conflate" in self._overwrite_steps, self._area, config, specificity)
+        _run(p, "conflate" in self._overwrite_steps, self._area, config, specificity,
+             review_identical=self._review_identical)
 
 
 # ---------------------------------------------------------------------------
@@ -948,6 +976,10 @@ def _extra_args(parser) -> None:
         "--overpass-url", dest="overpass_url", metavar="URL",
         help="Custom Overpass API endpoint (used when --area is specified)",
     )
+    parser.add_argument(
+        "--review-identical", dest="review_identical", action="store_true",
+        help="Keep zero-delta matches (IoU≥identical_iou, no tag changes) in _conflated.osm",
+    )
 
 
 def main() -> None:
@@ -964,7 +996,8 @@ def main() -> None:
     sources_by_code = {p["code"]: p for p in sources}
 
     tasks = [
-        ConflateTask(prov, sources_by_code, overwrite_steps, area=args.area)
+        ConflateTask(prov, sources_by_code, overwrite_steps, area=args.area,
+                     review_identical=args.review_identical)
         for prov in args.provinces
     ]
     run_dag(tasks, args.max_weight)

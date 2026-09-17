@@ -4,8 +4,29 @@ from __future__ import annotations
 
 from shapely.geometry import box
 
+from dbsn.conflate import is_zero_delta
 from dbsn.match import match_features
 from dbsn.tag_merge import merge_tags
+
+
+# ---------------------------------------------------------------------------
+# Zero-delta detection (identical matches dropped from review)
+# ---------------------------------------------------------------------------
+
+def test_zero_delta_identical_tags_high_iou():
+    assert is_zero_delta(0.96, {"building": "yes"}, {"building": "yes"})
+
+
+def test_zero_delta_low_iou_not_identical():
+    assert not is_zero_delta(0.90, {"building": "yes"}, {"building": "yes"})
+
+
+def test_zero_delta_merged_adds_tags_not_identical():
+    assert not is_zero_delta(0.96, {"building": "yes", "height": "5"}, {"building": "yes"})
+
+
+def test_zero_delta_threshold_override():
+    assert is_zero_delta(0.90, {"building": "yes"}, {"building": "yes"}, identical_iou=0.9)
 
 # ---------------------------------------------------------------------------
 # Feature matching
@@ -22,6 +43,16 @@ def test_match_one_to_one():
     assert result.dbsn_only == []
     assert result.osm_only == []
     assert result.ambiguous == []
+
+
+def test_match_reports_per_pair_iou():
+    dbsn = [("d1", box(0, 0, 1, 1))]
+    osm = [("w1", box(0.1, 0.1, 1.1, 1.1))]
+    result = match_features(dbsn, osm, _CFG)
+    iou = result.matched_ious[("d1", "w1")]
+    inter = box(0, 0, 1, 1).intersection(box(0.1, 0.1, 1.1, 1.1)).area
+    union = box(0, 0, 1, 1).union(box(0.1, 0.1, 1.1, 1.1)).area
+    assert abs(iou - inter / union) < 1e-9
 
 
 def test_match_greedy_best_iou_wins():

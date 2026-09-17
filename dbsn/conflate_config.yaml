@@ -6,6 +6,8 @@
 # near_miss_iou:       pairs with IoU in [near_miss_iou, iou_threshold) go to _ambiguous for review
 # offset_min_matches:  minimum matched pairs needed before attempting offset detection
 # offset_min_m:        minimum detected offset (metres) before shifting and re-running
+# identical_iou:       IoU above which a no-tag-change match is "identical" and dropped
+#                      from _conflated.osm (keep via --review-identical)
 #
 # Per-region or per-province overrides:
 #   regions:
@@ -21,6 +23,7 @@ defaults:
   near_miss_iou: 0.05
   offset_min_matches: 20
   offset_min_m: 5.0
+  identical_iou: 0.95
 
 regions: {}
 
