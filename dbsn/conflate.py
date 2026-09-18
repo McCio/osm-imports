@@ -956,12 +956,32 @@ def _run(
                         overlapping = _all_dbsn_ids[hi]
                         break
             if overlapping is not None:
-                # Refined DBSN supersedes raw import: auto-replace in .osc
+                # Refined DBSN supersedes raw import: in-place modify (keep way id)
+                # when nodes are safe, delete+create fallback otherwise
                 _, _, version = osm_by_id[osm_id]
-                osc_way_deletes.append((osm_id, version))
                 final_tags = _normalise_osm_tags(dbsn_tags_by_id[overlapping])
-                osc_replace_creates.append((final_tags, dbsn_geom_by_id[overlapping]))
-                conflated.append((final_tags, dbsn_geom_by_id[overlapping]))
+                dbsn_geom_l = dbsn_geom_by_id[overlapping]
+                geom_result = None
+                if _way_nodes_safe(osm_id, way_nodes, node_way_count, tagged_nodes,
+                                   node_to_ways, way_tags):
+                    geom_result = _update_geometry_osc(
+                        osm_id, version, dbsn_geom_l, osm_geom, final_tags,
+                        way_nodes, node_coords, node_versions,
+                        node_way_count, tagged_nodes, node_to_ways, way_tags,
+                        next_node_id,
+                    )
+                if geom_result:
+                    nc, nm, nd, wm = geom_result
+                    osc_node_creates.extend(nc)
+                    osc_node_modifies.extend(nm)
+                    osc_node_deletes.extend(nd)
+                    osc_geom_modifies.append(wm)
+                else:
+                    osc_way_deletes.append((osm_id, version))
+                    osc_replace_creates.append((final_tags, dbsn_geom_l))
+                conflated.append(({**final_tags, "ref:dbsn": overlapping,
+                                   "note:conflate": f"legacy_import,osm={osm_id}"},
+                                  dbsn_geom_l))
                 n_legacy_replace += 1
             else:
                 # No DBSN there: suggest delete — in .osc AND ambiguous for review
