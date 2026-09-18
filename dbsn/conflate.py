@@ -32,6 +32,12 @@ from dbsn.common import (
     read_sources,
 )
 from dbsn.convert import ConvertTask
+from dbsn.legacy_imports import (
+    compile_patterns,
+    fetch_changeset_meta,
+    is_legacy_import,
+    layered_patterns,
+)
 from dbsn.download_pbf import DownloadPbfTask, find_pbf
 from dbsn.download_pbf import _normalize as _pbf_normalize
 from dbsn.match import match_features
@@ -165,6 +171,10 @@ def _load_config(code: str, region: str) -> dict:
     cfg = dict(raw.get("defaults", {}))
     cfg.update(raw.get("regions", {}).get(region, {}))
     cfg.update(raw.get("provinces", {}).get(code, {}))
+    # Top-level sections (e.g. legacy_imports) pass through for sub-key access
+    for key in ("legacy_imports",):
+        if key in raw:
+            cfg[key] = raw[key]
     return cfg
 
 
@@ -898,9 +908,9 @@ def _run(
         print(f"  [conflate] {code}: {n_contained} OSM features contained in matched DBSN → ambiguous")
 
     # building:part containment check against ALL DBSN (matched + new + near-miss)
+    _all_dbsn_ids = list(dbsn_geom_by_id.keys())
+    _all_dbsn_geoms = [dbsn_geom_by_id[did] for did in _all_dbsn_ids]
     if part_features_raw:
-        _all_dbsn_ids = list(dbsn_geom_by_id.keys())
-        _all_dbsn_geoms = [dbsn_geom_by_id[did] for did in _all_dbsn_ids]
         _all_dbsn_tree = STRtree(_all_dbsn_geoms)
         n_parts_contained = 0
         for fid, tags, geom, _ver in part_features_raw:
@@ -922,6 +932,50 @@ def _run(
                 osm_only.append(({**tags, "osm:id": fid}, geom))
         if n_parts_contained:
             print(f"  [conflate] {code}: {n_parts_contained} building:part features inside DBSN → ambiguous")
+
+    # Legacy-import detection (changeset-source regex per region/province/area)
+    _legacy = compile_patterns(layered_patterns(config, code, p.get("region", ""), area_slug))
+    if _legacy and osm_only:
+        cs_meta = fetch_changeset_meta(
+            [tags["osm:id"] for tags, _ in osm_only if "osm:id" in tags],
+            _out(code, date, "_changesets.json", area_slug),
+        )
+        legacy_tree = STRtree(_all_dbsn_geoms) if _all_dbsn_ids else None
+        n_legacy_replace = n_legacy_delete = 0
+        keep_osm_only: list[tuple[dict, Any]] = []
+        for item in osm_only:
+            osm_id = item[0].get("osm:id")
+            if not osm_id or not is_legacy_import(cs_meta.get(osm_id), _legacy):
+                keep_osm_only.append(item)
+                continue
+            osm_tags, osm_geom = item
+            overlapping = None
+            if legacy_tree is not None and osm_geom.area > 0:
+                for hi in legacy_tree.query(osm_geom):
+                    if osm_geom.intersection(_all_dbsn_geoms[hi]).area > 0:
+                        overlapping = _all_dbsn_ids[hi]
+                        break
+            if overlapping is not None:
+                # Refined DBSN supersedes raw import: auto-replace in .osc
+                _, _, version = osm_by_id[osm_id]
+                osc_way_deletes.append((osm_id, version))
+                final_tags = _normalise_osm_tags(dbsn_tags_by_id[overlapping])
+                osc_replace_creates.append((final_tags, dbsn_geom_by_id[overlapping]))
+                conflated.append((final_tags, dbsn_geom_by_id[overlapping]))
+                n_legacy_replace += 1
+            else:
+                # No DBSN there: suggest delete — in .osc AND ambiguous for review
+                _, _, version = osm_by_id[osm_id]
+                osc_way_deletes.append((osm_id, version))
+                cs = cs_meta[osm_id].get("changeset", "")
+                ambiguous.append(({**osm_tags, "osm:id": osm_id,
+                                   "note:conflate": f"legacy_import,cs={cs},suggest=delete"},
+                                  osm_geom))
+                n_legacy_delete += 1
+        if n_legacy_replace or n_legacy_delete:
+            print(f"  [legacy ] {code}: {n_legacy_replace} auto-replace, "
+                  f"{n_legacy_delete} suggested delete (changeset-source match)")
+        osm_only = keep_osm_only
 
     # Ambiguous N:M
     for dbsn_ids, osm_ids in result.ambiguous:
