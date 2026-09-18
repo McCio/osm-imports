@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from shapely.geometry import box
 
-from dbsn.conflate import is_zero_delta, josm_load_urls
+from dbsn.conflate import compute_blocks, is_zero_delta, josm_load_urls
 from dbsn.match import match_features
 from dbsn.tag_merge import merge_tags
 
@@ -27,6 +27,77 @@ def test_zero_delta_merged_adds_tags_not_identical():
 
 def test_zero_delta_threshold_override():
     assert is_zero_delta(0.90, {"building": "yes"}, {"building": "yes"}, identical_iou=0.9)
+
+# ---------------------------------------------------------------------------
+# Blocks (spatial clustering of conflation outcome buckets)
+# ---------------------------------------------------------------------------
+
+def test_blocks_two_clusters_are_separate_blocks():
+    # Cluster of 2 new features + distant cluster of 1 matched
+    new = [box(0, 0, 1, 1), box(0.5, 0, 1.5, 1)]      # overlapping → one block
+    matched = [box(0, 3, 1, 4)]                        # far away → own block
+    blocks = compute_blocks({"new": new, "matched": matched}, {})
+    assert len(blocks) == 2
+    counts = sorted(tuple(sorted(b.counts.items())) for b in blocks)
+    assert counts == [(("matched", 1),), (("new", 2),)]
+
+
+def test_blocks_nearby_features_merge_into_one_block():
+    # buffer joins features closer than ~2× the buffer distance
+    new = [box(0, 0, 1, 1), box(0, 0.002, 1, 1.002)]  # ~220 m apart in lat
+    blocks = compute_blocks({"new": new}, {"block_buffer_m": 300})
+    assert len(blocks) == 1
+    assert blocks[0].counts["new"] == 2
+
+
+def test_blocks_empty_buckets_no_blocks():
+    assert compute_blocks({"new": [], "matched": []}, {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Greenfield classification (block ready for bulk import)
+# ---------------------------------------------------------------------------
+
+def _cluster(n_new, n_matched=0, n_osm_only=0, n_ambiguous=0):
+    """One tight cluster of features in a single block."""
+    return {
+        "new": [box(0, i * 0.001, 1, i * 0.001 + 1) for i in range(n_new)],
+        "matched": [box(0, i * 0.001, 1, i * 0.001 + 1) for i in range(n_matched)],
+        "osm_only": [box(0, i * 0.001, 1, i * 0.001 + 1) for i in range(n_osm_only)],
+        "ambiguous": [box(0, i * 0.001, 1, i * 0.001 + 1) for i in range(n_ambiguous)],
+    }
+
+
+_GF_CFG = {"greenfield_min_new": 10, "greenfield_max_other_ratio": 0.05}
+
+
+def test_greenfield_pure_new_cluster():
+    blocks = compute_blocks(_cluster(15), _GF_CFG)
+    assert len(blocks) == 1
+    assert blocks[0].is_greenfield
+
+
+def test_greenfield_small_cluster_rejected_by_min_new():
+    blocks = compute_blocks(_cluster(3), _GF_CFG)
+    assert not blocks[0].is_greenfield
+
+
+def test_greenfield_other_ratio_rejects_contaminated_block():
+    # 12 new + 1 matched = 8% other > 5% → rejected
+    blocks = compute_blocks(_cluster(12, n_matched=1), _GF_CFG)
+    assert not blocks[0].is_greenfield
+
+
+def test_greenfield_big_block_tolerates_few_conflicts():
+    # 200 new + 6 matched + 4 osm_only = 5% other → greenfield
+    blocks = compute_blocks(_cluster(200, n_matched=6, n_osm_only=4), _GF_CFG)
+    assert blocks[0].is_greenfield
+
+
+def test_greenfield_matched_only_block_not_greenfield():
+    blocks = compute_blocks(_cluster(0, n_matched=10), _GF_CFG)
+    assert not blocks[0].is_greenfield
+
 
 # ---------------------------------------------------------------------------
 # Feature matching

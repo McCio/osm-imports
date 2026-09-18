@@ -17,6 +17,13 @@
 # shape_area_tolerance / shape_perimeter_tolerance: relative tolerance (0–1)
 # shape_vertex_ratio:  max ratio of exterior vertex counts (cadastral detail vs
 #                      simplified hand-traced)
+# block_buffer_m:      buffer distance (metres) joining nearby features into one
+#                      spatial block (connected components of buffered geoms)
+# greenfield_min_new:  block needs at least this many new (DBSN-only) features to
+#                      qualify as greenfield — kills noise blocks
+# greenfield_max_other_ratio: matched+osm_only+ambiguous as fraction of new must
+#                      stay at or below this — tolerates few conflicts at scale
+#                      (200 new + 6 matched = 3% passes; 12 new + 1 matched = 8% fails)
 #
 # Per-region or per-province overrides:
 #   regions:
@@ -34,6 +41,9 @@ defaults:
   offset_min_m: 5.0
   identical_iou: 0.95
   shape_extra_distance_m: 100
+  block_buffer_m: 50
+  greenfield_min_new: 10
+  greenfield_max_other_ratio: 0.05
 
 regions: {}
 

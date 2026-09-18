@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import sys
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import numpy as np
 import osmium
@@ -41,6 +43,81 @@ _HERE = Path(__file__).parent
 _SPECIFICITY_FILE = _HERE / "tag_specificity.yaml"
 _CONFIG_FILE = _HERE / "conflate_config.yaml"
 
+
+@dataclass
+class Block:
+    """Spatial cluster of conflation outcomes — connected components of buffered
+    feature geometries across all buckets."""
+    block_id: int
+    geometry: Any                      # union of the block's buffered geometries
+    counts: dict[str, int]             # bucket name → feature count
+    coverage: float                    # fraction of block area covered by features
+    is_greenfield: bool = False        # ≥min_new new features, other buckets ≤ ratio
+
+
+def compute_blocks(buckets: dict[str, list[Any]], config: dict) -> list[Block]:
+    """Cluster conflation outcome buckets into spatial blocks.
+
+    Buffers all feature geometries (buffer_m), unions them into connected
+    components; each component = one block with per-bucket counts and coverage.
+    """
+    buffer_m = config.get("block_buffer_m", 50)
+    buffer_deg = buffer_m / 111_000
+
+    # Collect (bucket, geometry) pairs; drop empty geometries
+    entries = [(bucket, geom) for bucket, geoms in buckets.items()
+               for geom in geoms if not geom.is_empty]
+    if not entries:
+        return []
+
+    # ponytail: single unary_union over all buffered geoms; chunked union
+    # if province-scale (100k+ features) proves slow
+    geoms = [geom.buffer(buffer_deg) for _, geom in entries]
+    unioned = unary_union(geoms)
+    parts = list(unioned.geoms) if hasattr(unioned, "geoms") else [unioned]
+
+    # Assign each feature to a block: STRtree over buffered features, query by part
+    feat_tree = STRtree(geoms)
+    blocks: list[Block] = []
+    for i, part in enumerate(parts):
+        members = [entries[j] for j in feat_tree.query(part)
+                   if geoms[j].intersects(part)]
+        counts: dict[str, int] = {}
+        for bucket, _ in members:
+            counts[bucket] = counts.get(bucket, 0) + 1
+        unbuffered = unary_union([geom for _, geom in members])
+        coverage = unbuffered.area / part.area if part.area > 0 else 0.0
+        min_new = config.get("greenfield_min_new", 10)
+        max_other = config.get("greenfield_max_other_ratio", 0.05)
+        n_new = counts.get("new", 0)
+        n_other = sum(counts.values()) - n_new
+        is_greenfield = n_new >= min_new and (n_new == 0 or n_other / n_new <= max_other)
+        blocks.append(Block(block_id=i, geometry=part, counts=counts, coverage=coverage,
+                            is_greenfield=is_greenfield))
+    return blocks
+
+
+def _blocks_geojson(blocks: list[Block], path: Path) -> None:
+    """Write blocks as GeoJSON FeatureCollection; properties carry counts."""
+    fc = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": shapely_mapping(b.geometry),
+                "properties": {
+                    "block_id": b.block_id,
+                    "counts": b.counts,
+                    "coverage": round(b.coverage, 4),
+                    "greenfield": b.is_greenfield,
+                },
+            }
+            for b in blocks
+        ],
+    }
+    path.write_text(json.dumps(fc), encoding="utf-8")
+
+
 def josm_load_urls(layers: list[tuple[str, Path]], host: str) -> list[str]:
     """Remote-control URLs that import each (layer_name, path) as a new JOSM layer.
 
@@ -48,7 +125,6 @@ def josm_load_urls(layers: list[tuple[str, Path]], host: str) -> list[str]:
     URLs; /load_data wants inline data= and rejects file URLs).
     host includes the port, e.g. "localhost:8111".
     """
-    from urllib.parse import quote, urlencode
     urls = []
     for name, path in layers:
         params = urlencode({
@@ -906,13 +982,37 @@ def _run(
             else:
                 conflated.append((final_tags, osm_geom))
 
+    # Blocks: cluster all outcome buckets into spatial blocks
+    blocks = compute_blocks(
+        {"new": [g for _, g in new_features],
+         "osm_only": [g for _, g in osm_only],
+         "matched": [dbsn_geom_by_id[did] for did, _ in result.matched],
+         "ambiguous": [g for _, g in ambiguous]},
+        config,
+    )
+    if blocks:
+        n_greenfield = sum(b.is_greenfield for b in blocks)
+        print(f"  [blocks ] {code}: {len(blocks)} blocks ({n_greenfield} greenfield)")
+        # Tag greenfield-block new features for bulk import
+        if n_greenfield:
+            gf_geoms: list[Any] = [b.geometry for b in blocks if b.is_greenfield]
+            gf_tree = STRtree(gf_geoms)
+            for item in new_features:
+                geom = item[1]
+                if any(gf_geoms[i].contains(geom) for i in gf_tree.query(geom)):
+                    item[0]["note:conflate:block"] = "greenfield"
+
     # Write outputs
     def _items(bucket):
         for tags, geom in bucket:
             yield shapely_mapping(geom), tags
 
-    for suffix in ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm", "_changes.osc"):
+    for suffix in ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm", "_changes.osc",
+                   "_blocks.geojson"):
         _out(code, date, suffix, area_slug).unlink(missing_ok=True)
+
+    if blocks:
+        _blocks_geojson(blocks, _out(code, date, "_blocks.geojson", area_slug))
 
     n_new = write_osm_items(_items(new_features), _out(code, date, "_new.osm", area_slug), upload="never")
     n_osm_only = write_osm_items(_items(osm_only), _out(code, date, "_osm_only.osm", area_slug), upload="never")
