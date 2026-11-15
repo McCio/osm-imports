@@ -100,6 +100,8 @@ def _download_province(client: httpx.Client, p: Province, overwrite: bool) -> bo
 
 
 class DownloadTask(Task):
+    step = "download"
+
     def __init__(self, prov: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         self._prov = prov
         self._overwrite_steps = overwrite_steps
@@ -112,8 +114,6 @@ class DownloadTask(Task):
         print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
 
     def skip_if(self) -> bool:
-        if "download" in self._overwrite_steps:
-            return False
         return _zip_complete(ZIPS_DIR / self._prov["zip_name"], self._prov)
 
     def run(self) -> None:
@@ -174,7 +174,7 @@ def main() -> None:
                 if nb:
                     tasks.append(DownloadTask(nb))
 
-    run_dag(tasks, args.max_weight)
+    run_dag(tasks, args.max_weight, overwrite_steps)
 
 
 if __name__ == "__main__":

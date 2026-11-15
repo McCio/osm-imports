@@ -316,6 +316,7 @@ def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
 
 class ExtractRawTask(Task):
     run_in_process = True
+    step = "extract"
 
     def __init__(
         self,
@@ -348,8 +349,6 @@ class ExtractRawTask(Task):
         return [DownloadTask(self._prov, self._overwrite_steps)]
 
     def skip_if(self) -> bool:
-        if "extract" in self._overwrite_steps:
-            return False
         p = self._prov
         return all(fgb_path(p["code"], p["date"], s.name).exists() for s in self._active())
 
@@ -366,6 +365,7 @@ class ExtractRawTask(Task):
 
 class ExtendTask(Task):
     run_in_process = True
+    step = "extend"
 
     def __init__(self, p1: Province, p2: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
         if p1["code"] > p2["code"]:
@@ -388,8 +388,6 @@ class ExtendTask(Task):
         ]
 
     def skip_if(self) -> bool:
-        if "extend" in self._overwrite_steps:
-            return False
         c1, c2 = self._p1["code"], self._p2["code"]
         d1, d2 = self._p1["date"], self._p2["date"]
         return all(
@@ -450,7 +448,7 @@ def main() -> None:
                 if nb:
                     tasks.append(ExtendTask(prov, nb, overwrite_steps))
 
-    run_dag(tasks, args.max_weight)
+    run_dag(tasks, args.max_weight, overwrite_steps)
 
 
 if __name__ == "__main__":

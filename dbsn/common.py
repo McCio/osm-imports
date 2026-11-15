@@ -249,6 +249,10 @@ def parse_overwrite(raw: list[str] | None) -> frozenset[str]:
                 return frozenset(OVERWRITE_STEPS)
             if step:
                 steps.add(step)
+    unknown = steps - frozenset(OVERWRITE_STEPS)
+    if unknown:
+        sys.exit(f"error: unknown --overwrite step(s): {', '.join(sorted(unknown))}. "
+                 f"Valid: {', '.join(OVERWRITE_STEPS)} (or 'all')")
     return frozenset(steps)
 
 
@@ -334,6 +338,34 @@ def add_area_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_osm_area_arg(parser: argparse.ArgumentParser) -> None:
+    """--osm-area: OSM-side clip, conflate step only."""
+    parser.add_argument(
+        "--osm-area",
+        dest="osm_area",
+        metavar="NAME|r/ID|w/ID",
+        help="Clip also to an OSM area: admin relation or named area (relation or "
+             "closed way) by name or id, read from the province PBF; intersected "
+             "with --area when both given. Outputs get an extra name slug",
+    )
+
+
+def load_combined_clip(p: Province, area: str | None, osm_area: str | None):
+    """Load --area (DBSN loc_sg) and --osm-area (OSM geometry) clips; return their
+    intersection, the only geometry when just one is given, or None when neither."""
+    if not area and not osm_area:
+        return None
+    clip = None
+    if area:
+        clip = load_area_clip(p, area)
+    if osm_area:
+        osm_clip = load_osm_area_clip(p, osm_area)
+        clip = osm_clip if clip is None else (clip.intersection(osm_clip) if osm_clip is not None else clip)
+        if clip is not None and clip.is_empty:
+            print("  [warn   ] --area and --osm-area do not overlap: nothing will be processed", file=sys.stderr)
+    return clip
+
+
 def load_area_clip(p: Province, area_name: str):
     """Return a WGS84 shapely geometry covering the named loc_sg locality, or None if unavailable."""
     zip_path = ZIPS_DIR / p["zip_name"]
@@ -369,3 +401,93 @@ def load_area_clip(p: Province, area_name: str):
         return None
 
     return shapely.ops.unary_union(geoms)
+
+
+def parse_osm_area_selector(osm_area: str) -> tuple[str, int | None, str | None]:
+    """Split an --osm-area selector into (kind, id, lowercased name): id form or name form."""
+    m = re.fullmatch(r"([rRwW])/(\d+)", osm_area.strip())
+    if m:
+        return m.group(1).lower(), int(m.group(2)), None
+    return "", None, osm_area.strip().lower()
+
+
+def load_osm_area_clip(p: Province, osm_area: str):
+    """Return a WGS84 shapely geometry of an OSM area in this province.
+
+    Selector: 'r/ID' or 'w/ID' matches one element; otherwise a case-insensitive
+    exact-name match over named relations (boundaries, multipolygon areas) and
+    named closed ways in the cached province PBF (requires the conflate PBF,
+    downloaded by dbsn-conflate). Multiple matches are unioned.
+    """
+    from dbsn.download_pbf import find_pbf  # noqa: PLC0415 — avoids import cycle at module load
+
+    pbf = find_pbf(p["code"])
+    if pbf is None:
+        print(f"  [warn   ] --osm-area: no PBF for {p['code']}, run dbsn-conflate first", file=sys.stderr)
+        return None
+
+    import osmium  # noqa: PLC0415 — heavy parser, conflate-only
+    from shapely.geometry import LineString, Polygon  # noqa: PLC0415
+    from shapely.ops import polygonize, unary_union  # noqa: PLC0415
+
+    kind, wanted_id, name_sel = parse_osm_area_selector(osm_area)
+
+    class _RelHandler(osmium.SimpleHandler):
+        def __init__(self):
+            super().__init__()
+            self.matches: dict[int, list[int]] = {}  # rel id → outer member way ids
+            self.names: dict[int, str] = {}
+
+        def relation(self, r):
+            name = (r.tags.get("name") or "").strip()
+            hit = (kind == "r" and wanted_id == r.id) or (
+                name_sel is not None and name and name.lower() == name_sel
+                and r.tags.get("type") in ("boundary", "multipolygon")
+            )
+            if hit:
+                outers = [m.ref for m in r.members if m.type == "w" and m.role in ("", "outer")]
+                if outers:
+                    self.matches[r.id] = outers
+                    self.names[r.id] = name
+
+    rels = _RelHandler()
+    rels.apply_file(str(pbf), locations=False, idx="flex_mem")
+    member_way_ids = {wid for ids in rels.matches.values() for wid in ids}
+
+    class _WayHandler(osmium.SimpleHandler):
+        def __init__(self):
+            super().__init__()
+            self.pts: dict[int, list] = {}
+
+        def way(self, w):
+            named = (w.tags.get("name") or "").strip()
+            pick = w.id in member_way_ids or (
+                name_sel is not None and w.is_closed() and named
+                and named.lower() == name_sel and len(w.nodes) >= 4
+            ) or (kind == "w" and wanted_id == w.id and w.is_closed())
+            if pick:
+                self.pts[w.id] = [(n.location.lon, n.location.lat) for n in w.nodes]
+
+    ways = _WayHandler()
+    ways.apply_file(str(pbf), locations=True, idx="flex_mem")
+
+    geoms = []
+    labels = []
+    for rid, ids in rels.matches.items():
+        rings = [LineString(pts) for pts in (ways.pts.get(w) for w in ids) if pts]
+        if not rings:
+            continue
+        poly = unary_union(list(polygonize(rings)))
+        if not poly.is_empty:
+            geoms.append(poly)
+            labels.append(f"r/{rid} {rels.names[rid] or '(unnamed)'}")
+    for wid, pts in ways.pts.items():
+        if len(pts) >= 4 and pts[0] == pts[-1]:
+            geoms.append(Polygon(pts))
+            labels.append(f"w/{wid}")
+
+    if not geoms:
+        print(f"  [warn   ] --osm-area: no match for '{osm_area}' in {pbf.name}", file=sys.stderr)
+        return None
+    print(f"  [osm-are] {p['code']}: {osm_area} → {', '.join(labels)}")
+    return unary_union(geoms)

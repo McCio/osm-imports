@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import quote, urlencode
 
 import numpy as np
@@ -26,23 +29,24 @@ from dbsn.common import (
     Province,
     add_area_arg,
     add_max_weight_arg,
-    load_area_clip,
+    add_osm_area_arg,
+    load_combined_clip,
     parse_args,
     parse_overwrite,
     read_sources,
 )
 from dbsn.convert import ConvertTask
+from dbsn.download_pbf import DownloadPbfTask, find_pbf
+from dbsn.download_pbf import _normalize as _pbf_normalize
 from dbsn.legacy_imports import (
     compile_patterns,
     fetch_changeset_meta,
     is_legacy_import,
     layered_patterns,
 )
-from dbsn.download_pbf import DownloadPbfTask, find_pbf
-from dbsn.download_pbf import _normalize as _pbf_normalize
 from dbsn.match import match_features
 from dbsn.tag_merge import merge_tags
-from utils.dag import Task, run_dag
+from utils.dag import Result, Task, run_dag
 from utils.writers import write_osm_items
 
 _HERE = Path(__file__).parent
@@ -140,6 +144,61 @@ def josm_load_urls(layers: list[tuple[str, Path]], host: str) -> list[str]:
         }, quote_via=quote)
         urls.append(f"http://{host}/import?{params}")
     return urls
+
+
+JOSM_DEFAULT_HOST = "localhost:8111"
+
+
+def josm_open_file_url(path: Path, host: str) -> str:
+    """Remote-control URL that opens `path` as a file-bound layer.
+
+    Unlike /import, /open_file binds the layer to the file, so Cmd+S saves in place
+    (verified against JOSM 19678). It cannot name the layer and always adds a new one.
+    """
+    return f"http://{host}/open_file?filename={quote(str(Path(path).resolve()), safe='')}"
+
+
+def edited_sibling(path: Path) -> Path:
+    """`X_conflated.osm` -> `X_conflated_edited.osm`, the copy the user edits in JOSM."""
+    return path.with_name(f"{path.stem}_edited{path.suffix}")
+
+
+def ensure_edited_copy(path: Path) -> Path:
+    """Create the `_edited` sibling by byte copy (keeps upload="never") unless it exists.
+
+    Never overwrites: an existing sibling holds the user's edits.
+    """
+    edited = edited_sibling(path)
+    if not edited.exists():
+        edited.write_bytes(path.read_bytes())
+    return edited
+
+
+def josm_available(host: str, timeout: float = 1.0) -> bool:
+    """True when JOSM remote control answers /version at `host`."""
+    try:
+        urllib.request.urlopen(f"http://{host}/version", timeout=timeout).close()
+    except (URLError, OSError):
+        return False
+    return True
+
+
+def resolve_josm_host(josm: str | None, no_josm: bool) -> str | None:
+    """Host to open layers in, or None. Explicit --josm wins; otherwise probe the default."""
+    if no_josm:
+        return None
+    if josm:
+        return josm
+    return JOSM_DEFAULT_HOST if josm_available(JOSM_DEFAULT_HOST) else None
+
+
+def josm_target_provinces(provinces: list, results: dict[str, Result], explicit: bool) -> list:
+    """Provinces to open in JOSM: all when --josm was explicit, else only those whose
+    conflate task ran (cached ones would pile up layers for unchanged files)."""
+    if explicit:
+        return list(provinces)
+    return [p for p in provinces
+            if (r := results.get(f"conflate:{p['code']}")) is not None and r.status == "done"]
 
 
 def is_zero_delta(
@@ -618,18 +677,42 @@ def _geom_to_exterior_coords(geom) -> list[tuple[float, float]]:
 # Output path helpers
 # ---------------------------------------------------------------------------
 
-def _conflate_dir(code: str, date: str, area_slug: str = "") -> Path:
-    return CONFLATE_DIR / f"{code}_{date}{area_slug}"
+def _slugs(area: str | None, osm_area: str | None) -> tuple[str, str]:
+    """(area_slug, out_slug). out_slug = area + --osm-area slug names conflate dirs and files,
+    so slugged runs never shadow unslugged outputs; area_slug alone names the convert output."""
+    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
+    osm_area_slug = f"_osm-{_pbf_normalize(osm_area)}" if osm_area else ""
+    return area_slug, area_slug + osm_area_slug
 
 
-def _out(code: str, date: str, suffix: str, area_slug: str = "") -> Path:
-    stem = f"{code}_{date}{area_slug}"
-    return _conflate_dir(code, date, area_slug) / f"{stem}{suffix}"
+def _conflate_dir(code: str, date: str, out_slug: str = "") -> Path:
+    return CONFLATE_DIR / f"{code}_{date}{out_slug}"
+
+
+def _out(code: str, date: str, suffix: str, out_slug: str = "") -> Path:
+    return _conflate_dir(code, date, out_slug) / f"{code}_{date}{out_slug}{suffix}"
 
 
 # ---------------------------------------------------------------------------
 # Core conflation run
 # ---------------------------------------------------------------------------
+
+def _staleness_reason(code: str, area: str | None, outputs: list[Path]) -> str | None:
+    """Return why existing outputs should be rebuilt, or None if fresh.
+
+    Compares input mtimes against the newest output mtime. The PBF is the input
+    that changes out-of-band (server date rolls → new file, --overwrite pbf);
+    the DBSN OSM input is produced by the DAG's own convert dependency chain.
+    """
+    if not all(o.exists() for o in outputs):
+        return None  # incomplete outputs → _run's own existence check governs
+    out_mtime = max(o.stat().st_mtime for o in outputs)
+    pbf_slug = _pbf_normalize(area) if area else ""
+    pbf = find_pbf(code, pbf_slug)
+    if pbf is not None and pbf.stat().st_mtime > out_mtime:
+        return f"PBF {pbf.name} is newer than outputs"
+    return None
+
 
 def _run(
     p: Province,
@@ -638,10 +721,11 @@ def _run(
     config: dict,
     specificity: dict[str, list[str]],
     review_identical: bool = False,
+    osm_area: str | None = None,
 ) -> None:
     code, date = p["code"], p["date"]
-    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
-    out_dir = _conflate_dir(code, date, area_slug)
+    area_slug, out_slug = _slugs(area, osm_area)
+    out_dir = _conflate_dir(code, date, out_slug)
 
     # Find DBSN OSM output (newest of .osm / .osm.bz2)
     candidates = [
@@ -654,17 +738,21 @@ def _run(
         return
     dbsn_osm = max(existing, key=lambda c: c.stat().st_mtime)
 
-    # Check if outputs already exist
-    outputs = [_out(code, date, s, area_slug) for s in ("_new.osm", "_osm_only.osm", "_conflated.osm",
-                                                          "_ambiguous.osm", "_changes.osc")]
-    if not overwrite_conflate and all(o.exists() for o in outputs):
+    # Check if outputs already exist (and are newer than the PBF they were built from)
+    outputs = [_out(code, date, s, out_slug) for s in ("_new.osm", "_osm_only.osm",
+                                                        "_conflated.osm", "_ambiguous.osm",
+                                                        "_changes.osc")]
+    stale_reason = _staleness_reason(code, area, outputs)
+    if not overwrite_conflate and all(o.exists() for o in outputs) and not stale_reason:
         size = sum(o.stat().st_size for o in outputs) // 1024
         print(f"  [skip   ] {code}: conflation outputs exist ({size} KB, use --overwrite conflate)")
         return
+    if stale_reason:
+        print(f"  [conflate] {code}: re-running ({stale_reason})")
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    clip = load_area_clip(p, area) if area else None
+    clip = load_combined_clip(p, area, osm_area)
 
     print(f"  [parse  ] {code}: reading DBSN features from {dbsn_osm.name}")
     dbsn_features = _parse_dbsn(dbsn_osm, clip=clip)
@@ -691,7 +779,7 @@ def _run(
             node_to_ways.setdefault(ref, []).append(wid)
 
     # Load existing resolutions
-    resolutions_path = _out(code, date, "_resolutions.json", area_slug)
+    resolutions_path = _out(code, date, "_resolutions.json", out_slug)
     resolutions: dict = {}
     if resolutions_path.exists():
         resolutions = json.loads(resolutions_path.read_text(encoding="utf-8"))
@@ -938,7 +1026,7 @@ def _run(
     if _legacy and osm_only:
         cs_meta = fetch_changeset_meta(
             [tags["osm:id"] for tags, _ in osm_only if "osm:id" in tags],
-            _out(code, date, "_changesets.json", area_slug),
+            _out(code, date, "_changesets.json", out_slug),
         )
         legacy_tree = STRtree(_all_dbsn_geoms) if _all_dbsn_ids else None
         n_legacy_replace = n_legacy_delete = 0
@@ -1083,18 +1171,21 @@ def _run(
 
     for suffix in ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm", "_changes.osc",
                    "_blocks.geojson"):
-        _out(code, date, suffix, area_slug).unlink(missing_ok=True)
+        _out(code, date, suffix, out_slug).unlink(missing_ok=True)
 
     if blocks:
-        _blocks_geojson(blocks, _out(code, date, "_blocks.geojson", area_slug))
+        _blocks_geojson(blocks, _out(code, date, "_blocks.geojson", out_slug))
 
-    n_new = write_osm_items(_items(new_features), _out(code, date, "_new.osm", area_slug), upload="never")
-    n_osm_only = write_osm_items(_items(osm_only), _out(code, date, "_osm_only.osm", area_slug), upload="never")
-    n_conflated = write_osm_items(_items(conflated), _out(code, date, "_conflated.osm", area_slug), upload="never")
-    n_ambiguous = write_osm_items(_items(ambiguous), _out(code, date, "_ambiguous.osm", area_slug), upload="never")
+    def _write_review(bucket, suffix: str) -> int:
+        return write_osm_items(_items(bucket), _out(code, date, suffix, out_slug), upload="never")
+
+    n_new = _write_review(new_features, "_new.osm")
+    n_osm_only = _write_review(osm_only, "_osm_only.osm")
+    n_conflated = _write_review(conflated, "_conflated.osm")
+    n_ambiguous = _write_review(ambiguous, "_ambiguous.osm")
     osc_all_creates = [*new_features, *osc_replace_creates]
     _osc_write(
-        _out(code, date, "_changes.osc", area_slug),
+        _out(code, date, "_changes.osc", out_slug),
         osc_all_creates, osc_way_tag_modifies, osc_way_deletes,
         osc_node_creates, osc_node_modifies, osc_node_deletes,
         osc_geom_modifies, next_node_id,
@@ -1115,6 +1206,8 @@ def _run(
 # ---------------------------------------------------------------------------
 
 class ConflateTask(Task):
+    step = "conflate"
+
     def __init__(
         self,
         prov: Province,
@@ -1125,6 +1218,7 @@ class ConflateTask(Task):
         compress: bool = False,
         extend: bool = True,
         review_identical: bool = False,
+        osm_area: str | None = None,
     ) -> None:
         self._prov = prov
         self._sources = sources_by_code
@@ -1134,27 +1228,28 @@ class ConflateTask(Task):
         self._compress = compress
         self._extend = extend
         self._review_identical = review_identical
+        self._osm_area = osm_area
 
     @property
     def name(self) -> str:
         return f"conflate:{self._prov['code']}"
 
     def skip_if(self) -> bool:
-        if "conflate" in self._overwrite_steps:
-            return False
         code, date = self._prov["code"], self._prov["date"]
-        area_slug = f"_{self._area.lower().replace(' ', '_')}" if self._area else ""
-        return all(
-            _out(code, date, s, area_slug).exists()
+        _, out_slug = _slugs(self._area, self._osm_area)
+        outputs = [
+            _out(code, date, s, out_slug)
             for s in ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm", "_changes.osc")
-        )
+        ]
+        # existence plus freshness vs the PBF — a re-downloaded/newer PBF
+        # (server date roll, --overwrite pbf) invalidates existing outputs
+        return all(o.exists() for o in outputs) and not _staleness_reason(code, self._area, outputs)
 
     def dependencies(self) -> list[Task]:
         return [
             ConvertTask(self._prov, self._sources, self._overwrite_steps,
                         self._fmt, self._compress, self._extend, area=self._area),
-            DownloadPbfTask(self._prov, overwrite="pbf" in self._overwrite_steps,
-                            area=self._area),
+            DownloadPbfTask(self._prov, area=self._area),
         ]
 
     def run(self) -> None:
@@ -1162,7 +1257,7 @@ class ConflateTask(Task):
         config = _load_config(p["code"], p.get("region", ""))
         specificity = _load_specificity()
         _run(p, "conflate" in self._overwrite_steps, self._area, config, specificity,
-             review_identical=self._review_identical)
+             review_identical=self._review_identical, osm_area=self._osm_area)
 
 
 # ---------------------------------------------------------------------------
@@ -1171,6 +1266,7 @@ class ConflateTask(Task):
 
 def _extra_args(parser) -> None:
     add_area_arg(parser)
+    add_osm_area_arg(parser)
     add_max_weight_arg(parser)
     parser.add_argument(
         "--download",
@@ -1178,18 +1274,20 @@ def _extra_args(parser) -> None:
         help="Download osmit-estratti PBF before conflating (equivalent to --overwrite pbf)",
     )
     parser.add_argument(
-        "--overpass-url", dest="overpass_url", metavar="URL",
-        help="Custom Overpass API endpoint (used when --area is specified)",
-    )
-    parser.add_argument(
         "--review-identical", dest="review_identical", action="store_true",
         help="Keep zero-delta matches (IoU≥identical_iou, no tag changes) in _conflated.osm",
     )
-    parser.add_argument(
-        "--josm", nargs="?", const="localhost:8111", metavar="HOST:PORT",
+    josm = parser.add_mutually_exclusive_group()
+    josm.add_argument(
+        "--josm", nargs="?", const=JOSM_DEFAULT_HOST, metavar="HOST:PORT",
         help="After conflation, open review files + PBF in JOSM via remote control; "
-             "optional HOST:PORT (default: localhost:8111). PBF layer is reference "
-             "only — no lock available via remote control",
+             "optional HOST:PORT (default: localhost:8111). Without --josm/--no-josm, "
+             "layers open when JOSM answers on the default host. Review files open as "
+             "editable *_edited.osm copies",
+    )
+    josm.add_argument(
+        "--no-josm", dest="no_josm", action="store_true",
+        help="Never open layers in JOSM, even when it is running",
     )
 
 
@@ -1208,31 +1306,29 @@ def main() -> None:
 
     tasks = [
         ConflateTask(prov, sources_by_code, overwrite_steps, area=args.area,
-                     review_identical=args.review_identical)
+                     review_identical=args.review_identical, osm_area=args.osm_area)
         for prov in args.provinces
     ]
-    run_dag(tasks, args.max_weight)
+    results = run_dag(tasks, args.max_weight, overwrite_steps)
 
-    if args.josm:
-        _josm_open(args.provinces, args.area, args.josm)
+    host = resolve_josm_host(args.josm, args.no_josm)
+    if host:
+        targets = josm_target_provinces(args.provinces, results, explicit=bool(args.josm))
+        _josm_open(targets, args.area, args.osm_area, host)
 
 
-def _josm_open(provinces: list, area: str | None, host: str) -> None:
+def _josm_open(provinces: list, area: str | None, osm_area: str | None, host: str) -> None:
     """Open conflate review files + PBF as JOSM layers via remote control."""
-    import urllib.request
-    from urllib.error import URLError
-
-    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
+    _, out_slug = _slugs(area, osm_area)
     pbf_slug = _pbf_normalize(area) if area else ""
     for p in provinces:
         code, date = p["code"], p["date"]
         pbf = find_pbf(code, pbf_slug)
-        layers = []
+        layers = []  # (name, path, url) in open order
         if pbf is not None:
             # /import cannot read PBF binary — convert to .osm XML (cached next to it)
-            xml = pbf.with_suffix(".osm")
+            xml = pbf.with_suffix("")  # VE_d.osm.pbf -> VE_d.osm
             if not xml.exists() or xml.stat().st_mtime < pbf.stat().st_mtime:
-                import subprocess
                 result = subprocess.run(
                     ["osmium", "cat", str(pbf), "-o", str(xml)],
                     check=False, capture_output=True, text=True,
@@ -1242,23 +1338,31 @@ def _josm_open(provinces: list, area: str | None, host: str) -> None:
                           f"(exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
                     xml = pbf  # attempt PBF import anyway
             if xml.exists():
-                layers.append((f"osm-estratti {code}", xml))
+                # reference layer: not edited, so named /import rather than file-bound /open_file
+                layers.append((f"osm-estratti {code}", xml,
+                               josm_load_urls([(f"osm-estratti {code}", xml)], host)[0]))
         for suffix, label in (("_ambiguous.osm", "ambiguous"), ("_new.osm", "new"),
                               ("_osm_only.osm", "osm-only"), ("_conflated.osm", "conflated")):
-            out = _out(code, date, suffix, area_slug)
+            out = _out(code, date, suffix, out_slug)
             if out.exists():
-                layers.append((f"{label} {code}", out))
+                # edit the sibling copy: Cmd+S saves next to the original, never over it
+                edited = edited_sibling(out)
+                if edited.exists() and edited.stat().st_mtime < out.stat().st_mtime:
+                    print(f"  [josm   ] {code}: {edited.name} is older than the regenerated "
+                          f"{out.name}; delete it for a fresh copy")
+                edited = ensure_edited_copy(out)
+                layers.append((f"{label} {code}", edited, josm_open_file_url(edited, host)))
         if not layers:
             continue
         try:
-            for url in josm_load_urls(layers, host):
+            for _, _, url in layers:
                 urllib.request.urlopen(url, timeout=5).close()
             print(f"  [josm   ] {code}: opened {len(layers)} layers in JOSM "
                   f"(new layers each run — close stale ones)")
         except (URLError, OSError):
             print(f"  [josm   ] {code}: JOSM remote control not reachable at {host} "
                   f"(enable it in JOSM preferences), open manually:", file=sys.stderr)
-            for name, path in layers:
+            for name, path, _ in layers:
                 print(f"           {name}: {path}", file=sys.stderr)
 
 

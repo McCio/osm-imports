@@ -26,8 +26,10 @@ class SimpleTask(Task):
         skip: bool = False,
         fail: bool = False,
         delay: float = 0.0,
+        step: str | None = None,
     ) -> None:
         self._name = name
+        self.step = step
         self._deps = deps or []
         self.weight = weight
         self._skip = skip
@@ -137,6 +139,31 @@ def test_all_skipped_returns_immediately():
     results = Pipeline().add(b).run(max_weight=2)
     assert results["a"].status == "skipped"
     assert results["b"].status == "skipped"
+
+
+def test_unneeded_task_pruned_when_consumers_cached():
+    dep = SimpleTask("dep")
+    consumer = SimpleTask("consumer", deps=[dep], skip=True)
+    Pipeline().add(consumer).run(max_weight=2)
+    assert not dep.ran  # consumer cached → nobody needs dep
+
+
+def test_overwritten_step_runs_despite_cached_consumers():
+    """--overwrite semantics: a task whose step is overwritten refreshes its output
+    even when every consumer is cached, and even when its own skip_if says cached."""
+    dep = SimpleTask("dep", skip=True, step="fetch")
+    consumer = SimpleTask("consumer", deps=[dep], skip=True)
+    results = Pipeline().add(consumer).run(max_weight=2, overwrite_steps=frozenset({"fetch"}))
+    assert dep.ran
+    assert results["dep"].status == "done"
+    assert results["consumer"].status == "skipped"
+
+
+def test_other_overwrite_step_does_not_force():
+    dep = SimpleTask("dep", skip=True, step="fetch")
+    consumer = SimpleTask("consumer", deps=[dep], skip=True)
+    Pipeline().add(consumer).run(max_weight=2, overwrite_steps=frozenset({"convert"}))
+    assert not dep.ran
 
 
 def test_skipped_task_does_not_consume_weight():

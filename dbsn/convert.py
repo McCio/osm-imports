@@ -156,6 +156,7 @@ def _convert_province(
 class ConvertTask(Task):
     run_in_process = True
     weight = 1.5
+    step = "convert"
 
     def __init__(
         self,
@@ -205,8 +206,6 @@ class ConvertTask(Task):
         return OSM_DIR / f"{self._prov['code']}_{self._prov['date']}{area_slug}.{ext}"
 
     def skip_if(self) -> bool:
-        if "convert" in self._overwrite_steps:
-            return False
         return self._out_path().exists()
 
     def run(self) -> None:
@@ -285,7 +284,7 @@ def main() -> None:
                     area=args.area)
         for prov in args.provinces
     ]
-    run_dag(tasks, args.max_weight)
+    run_dag(tasks, args.max_weight, overwrite_steps)
 
 
 if __name__ == "__main__":

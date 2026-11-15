@@ -22,6 +22,11 @@ def _extra_args(p) -> None:
     validate._extra_args(p)
     p.add_argument("--neighbours", action="store_true", help="Force re-run of neighbours step")
     p.add_argument("--no-extend", action="store_true", help="Skip cross-boundary extension phase")
+    p.add_argument(
+        "--overpass-url", dest="overpass_url", metavar="URL",
+        help=f"Overpass API endpoint for the neighbours step "
+             f"(default: {neighbours_mod._OVERPASS_URL})",
+    )
     add_area_arg(p)
     add_max_weight_arg(p)
 
@@ -48,7 +53,9 @@ def main() -> None:
     all_have_neighbours = all("neighbours" in p for p in provinces)
     if "neighbours" in overwrite_steps or args.neighbours or not all_have_neighbours:
         print("=== Step 1: Neighbours ===")
-        neighbours_mod.run(read_sources(), provinces, overwrite="neighbours" in overwrite_steps or args.neighbours)
+        neighbours_mod.run(read_sources(), provinces,
+                           overwrite="neighbours" in overwrite_steps or args.neighbours,
+                           overpass_url=args.overpass_url)
 
     all_sources = read_sources()
     provinces = filter_provinces(all_sources, args.province)
@@ -68,7 +75,7 @@ def main() -> None:
         )
         for prov in provinces
     ]
-    run_dag(tasks, args.max_weight)
+    run_dag(tasks, args.max_weight, overwrite_steps)
 
 
 if __name__ == "__main__":

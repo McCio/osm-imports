@@ -58,6 +58,10 @@ def find_pbf(code: str, area_slug: str = "") -> Path | None:
     """Return the newest PBF for this province code (and optional area slug), or None."""
     suffix = f"_{area_slug}" if area_slug else ""
     matches = sorted(CONFLATE_DIR.glob(f"{code}_*/{code}_*{suffix}.osm.pbf"))
+    if not area_slug:
+        # empty slug = full-province PBF only; "." sorts before "_", so an area-clipped one would win
+        full = re.compile(rf"{re.escape(code)}_\d{{4}}-\d{{2}}-\d{{2}}\.osm\.pbf")
+        matches = [m for m in matches if full.fullmatch(m.name)]
     return matches[-1] if matches else None
 
 
@@ -94,10 +98,10 @@ def _osmium_extract(src: Path, dst: Path, clip_geom) -> None:
 
 
 class DownloadPbfTask(Task):
-    def __init__(self, prov: Province, overwrite: bool = False,
-                 area: str | None = None) -> None:
+    step = "pbf"
+
+    def __init__(self, prov: Province, area: str | None = None) -> None:
         self._prov = prov
-        self._overwrite = overwrite
         self._area = area
         self._area_slug = _normalize(area) if area else ""
 
@@ -106,8 +110,6 @@ class DownloadPbfTask(Task):
         return f"pbf:{self._prov['code']}"
 
     def skip_if(self) -> bool:
-        if self._overwrite:
-            return False
         return find_pbf(self._prov["code"], self._area_slug) is not None
 
     def dependencies(self) -> list[Task]:

@@ -17,11 +17,13 @@ class Task(ABC):
 
     Subclasses must implement ``name`` and ``run()``.
     Override ``weight`` (class attribute), ``run_in_process``, ``skip_if()``,
-    and ``dependencies()`` as needed.
+    and ``dependencies()`` as needed. ``step`` names the ``--overwrite`` step the
+    task belongs to: when that step is overwritten the task always runs.
     """
 
     weight: float = 1
     run_in_process: bool = False
+    step: str | None = None
 
     @property
     @abstractmethod
@@ -86,11 +88,13 @@ class Pipeline:
             self.add(dep)
         return self
 
-    def run(self, max_weight: float = 4) -> dict[str, Result]:
+    def run(self, max_weight: float = 4, overwrite_steps: frozenset[str] = frozenset()) -> dict[str, Result]:
         """Execute all registered tasks respecting dependencies and weight budget.
 
         Tasks with run_in_process=True execute in worker processes (bypasses GIL).
         Skipped tasks (skip_if() == True) bypass the semaphore entirely.
+        Tasks whose ``step`` is in ``overwrite_steps`` always run: skip_if() is not
+        consulted and they are never pruned.
         Raises the first exception encountered; in-flight tasks are allowed to finish.
         """
         if not self._tasks:
@@ -105,7 +109,8 @@ class Pipeline:
         # Pre-compute which tasks actually need to run.
         # A task is "needed" only if it has a consumer that will run.
         # Iteratively prune tasks whose entire consumer set will skip.
-        skip_cache = {n: t.skip_if() for n, t in self._tasks.items()}
+        forced = {n for n, t in self._tasks.items() if t.step in overwrite_steps}
+        skip_cache = {n: n not in forced and t.skip_if() for n, t in self._tasks.items()}
         rev_deps: dict[str, set[str]] = {n: set() for n in self._tasks}
         for n, deps in dep_names.items():
             for d in deps:
@@ -115,6 +120,8 @@ class Pipeline:
         while changed:
             changed = False
             for name in list(needed):
+                if name in forced:
+                    continue
                 if rev_deps[name] and not any(c in needed for c in rev_deps[name]):
                     needed.discard(name)
                     changed = True
@@ -201,14 +208,16 @@ class Pipeline:
         return results
 
 
-def run_dag(root_tasks: list[Task], max_weight: float) -> dict[str, Result]:
+def run_dag(
+    root_tasks: list[Task], max_weight: float, overwrite_steps: frozenset[str] = frozenset()
+) -> dict[str, Result]:
     """Build a pipeline from root tasks and run it, printing a summary."""
     pipeline = Pipeline()
     for task in root_tasks:
         pipeline.add(task)
     n = len(pipeline._tasks)
     print(f"\n=== DAG: {n} tasks, max_weight={max_weight} ===\n")
-    results = pipeline.run(max_weight=max_weight)
+    results = pipeline.run(max_weight=max_weight, overwrite_steps=overwrite_steps)
     done = sum(1 for r in results.values() if r.status == "done")
     skipped = sum(1 for r in results.values() if r.status == "skipped")
     print(f"\nDone: {done} executed, {skipped} cached/skipped")

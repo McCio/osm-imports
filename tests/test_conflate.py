@@ -2,11 +2,29 @@
 
 from __future__ import annotations
 
+import io
+import os
+import socket
+from urllib.parse import quote
+
 from shapely.geometry import box
 
-from dbsn.conflate import compute_blocks, is_zero_delta, josm_load_urls
+from dbsn import conflate
+from dbsn.conflate import (
+    JOSM_DEFAULT_HOST,
+    compute_blocks,
+    edited_sibling,
+    ensure_edited_copy,
+    is_zero_delta,
+    josm_available,
+    josm_load_urls,
+    josm_open_file_url,
+    josm_target_provinces,
+    resolve_josm_host,
+)
 from dbsn.match import match_features
 from dbsn.tag_merge import merge_tags
+from utils.dag import Result
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +171,6 @@ def test_shape_match_rejects_different_size():
 # ---------------------------------------------------------------------------
 
 def test_josm_load_urls_builds_one_url_per_layer(tmp_path):
-    from urllib.parse import quote
     pbf = tmp_path / "VE.osm.pbf"
     pbf.touch()
     amb = tmp_path / "VE_ambiguous.osm"
@@ -171,6 +188,116 @@ def test_josm_load_urls_builds_one_url_per_layer(tmp_path):
 def test_josm_load_urls_escapes_layer_name(tmp_path):
     urls = josm_load_urls([("a b&c", tmp_path / "x.osm")], host="h")
     assert "layer_name=a%20b%26c" in urls[0]
+
+
+def test_josm_open_file_url_quotes_path(tmp_path):
+    f = tmp_path / "a b" / "VE_new_edited.osm"
+    url = josm_open_file_url(f, host="localhost:8111")
+    assert url == f"http://localhost:8111/open_file?filename={quote(str(f.resolve()), safe='')}"
+    assert " " not in url
+
+
+def test_edited_sibling_name(tmp_path):
+    assert edited_sibling(tmp_path / "VE_conflated.osm") == tmp_path / "VE_conflated_edited.osm"
+
+
+def test_ensure_edited_copy_is_byte_copy_and_never_overwrites(tmp_path):
+    src = tmp_path / "VE_new.osm"
+    src.write_bytes(b"<osm version='0.6' upload=\"never\"></osm>")
+    edited = ensure_edited_copy(src)
+    assert edited == tmp_path / "VE_new_edited.osm"
+    assert edited.read_bytes() == src.read_bytes()  # keeps upload="never"
+    edited.write_bytes(b"user edits")
+    src.write_bytes(b"regenerated")
+    assert ensure_edited_copy(src).read_bytes() == b"user edits"
+
+
+def test_josm_available_false_when_nothing_listens():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    assert not josm_available(f"127.0.0.1:{port}", timeout=0.5)
+
+
+def test_resolve_josm_host(monkeypatch):
+    monkeypatch.setattr("dbsn.conflate.josm_available", lambda host, timeout=1.0: True)
+    assert resolve_josm_host(None, no_josm=True) is None
+    assert resolve_josm_host("other:9", no_josm=False) == "other:9"
+    assert resolve_josm_host(None, no_josm=False) == JOSM_DEFAULT_HOST
+    monkeypatch.setattr("dbsn.conflate.josm_available", lambda host, timeout=1.0: False)
+    assert resolve_josm_host(None, no_josm=False) is None
+    assert resolve_josm_host("other:9", no_josm=False) == "other:9"
+
+
+def _staleness_setup(tmp_path, monkeypatch, pbf_mtime: int):
+    pbf = tmp_path / "VE_d.osm.pbf"
+    pbf.write_bytes(b"")
+    out = tmp_path / "VE_d_new.osm"
+    out.write_text("<osm/>")
+    os.utime(pbf, (pbf_mtime, pbf_mtime))
+    os.utime(out, (2000, 2000))
+    monkeypatch.setattr(conflate, "find_pbf", lambda *a: pbf)
+    return out
+
+
+def test_staleness_reason_newer_pbf(tmp_path, monkeypatch):
+    out = _staleness_setup(tmp_path, monkeypatch, pbf_mtime=3000)
+    assert "newer" in conflate._staleness_reason("VE", None, [out])
+
+
+def test_staleness_reason_fresh_or_incomplete(tmp_path, monkeypatch):
+    out = _staleness_setup(tmp_path, monkeypatch, pbf_mtime=1000)
+    assert conflate._staleness_reason("VE", None, [out]) is None
+    assert conflate._staleness_reason("VE", None, [out, tmp_path / "missing.osm"]) is None
+
+
+def test_slugs_and_output_paths():
+    assert conflate._slugs(None, None) == ("", "")
+    assert conflate._slugs("Isola dei Petroli", None) == ("_isola_dei_petroli",) * 2
+    assert conflate._slugs(None, "Isola dei Petroli") == ("", "_osm-isoladeipetroli")
+    assert conflate._slugs("Marghera", "r/6628636") == ("_marghera", "_marghera_osm-r6628636")
+    out = conflate._out("VE", "d", "_new.osm", "_osm-x")
+    assert out.parent.name == "VE_d_osm-x" and out.name == "VE_d_osm-x_new.osm"
+
+
+def test_josm_target_provinces_auto_only_ran_explicit_all():
+    provs = [{"code": "VE"}, {"code": "TV"}, {"code": "PD"}]
+    results = {
+        "conflate:VE": Result("conflate:VE", "done"),
+        "conflate:TV": Result("conflate:TV", "skipped"),
+    }
+    assert josm_target_provinces(provs, results, explicit=False) == [{"code": "VE"}]
+    assert josm_target_provinces(provs, results, explicit=True) == provs
+
+
+def _josm_setup(tmp_path, monkeypatch, edited_older: bool):
+    """VE_new.osm + VE_new_edited.osm in tmp_path; urlopen stubbed to record URLs."""
+    orig = tmp_path / "VE_new.osm"
+    orig.write_text("<osm/>")
+    edited = tmp_path / "VE_new_edited.osm"
+    edited.write_text("user edits")
+    os.utime(orig, (2000, 2000))
+    os.utime(edited, (1000, 1000) if edited_older else (3000, 3000))
+    monkeypatch.setattr(conflate, "_out", lambda code, date, suffix, *a: tmp_path / f"VE{suffix}")
+    monkeypatch.setattr(conflate, "find_pbf", lambda *a: None)
+    opened = []
+    monkeypatch.setattr(conflate.urllib.request, "urlopen",
+                        lambda url, timeout: opened.append(url) or io.BytesIO())
+    return edited, opened
+
+
+def test_josm_open_warns_when_edited_older_than_original(tmp_path, monkeypatch, capsys):
+    edited, opened = _josm_setup(tmp_path, monkeypatch, edited_older=True)
+    conflate._josm_open([{"code": "VE", "date": "d"}], None, None, "h:1")
+    assert "older" in capsys.readouterr().out
+    assert edited.read_text() == "user edits"  # never overwritten
+    assert opened == [josm_open_file_url(edited, "h:1")]
+
+
+def test_josm_open_silent_when_edited_is_current(tmp_path, monkeypatch, capsys):
+    _josm_setup(tmp_path, monkeypatch, edited_older=False)
+    conflate._josm_open([{"code": "VE", "date": "d"}], None, None, "h:1")
+    assert "older" not in capsys.readouterr().out
 
 
 def test_match_greedy_best_iou_wins():

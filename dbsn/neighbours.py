@@ -173,15 +173,16 @@ def run(
     all_sources: list[Province],
     selected: list[Province],
     overwrite: bool = False,
-    overpass_url: str = _OVERPASS_URL,
+    overpass_url: str | None = None,
 ) -> None:
     """Compute neighbours for all provinces; write to sources.json.
 
     `selected` is used to determine whether to exit non-zero on unmatched.
     `overwrite` forces a fresh Overpass fetch (ignores the local cache).
+    `overpass_url` None falls back to the default endpoint.
     """
     tty = sys.stdin.isatty() and sys.stdout.isatty()
-    elements = _fetch_boundaries(overwrite=overwrite, url=overpass_url)
+    elements = _fetch_boundaries(overwrite=overwrite, url=overpass_url or _OVERPASS_URL)
 
     # Match each province to an OSM boundary, build shapely geometry
     geoms: dict[str, object] = {}  # code -> shapely geometry

@@ -50,6 +50,7 @@ All commands accept `--province CODE|NAME|REGION|all` (comma-separated for multi
 | `uv run dbsn-all      --province all` | Run all steps in sequence |
 | `uv run dbsn-all      --province all --neighbours` | Force re-run of the neighbours step |
 | `uv run dbsn-all      --province all --no-extend` | Run pipeline but skip cross-province extension |
+| `uv run dbsn-all      --province all --neighbours --overpass-url URL` | Force neighbours step using a custom Overpass endpoint (default `https://overpass-api.de`) |
 
 Add `--overwrite` to reprocess existing output files.
 
@@ -140,6 +141,16 @@ uv run dbsn-conflate --province VE --area Marghera
 
 The PBF for the province is downloaded automatically if not already present. Output goes to `data/dbsn/conflate/{CODE}_{date}_{area}/`.
 
+Useful flags:
+
+| Flag | Effect |
+|---|---|
+| `--osm-area NAME\|r/ID\|w/ID` | Further clip to an OSM-side area — an admin relation or named area (relation or closed way) read from the province PBF, by name (`Isola dei Petroli`) or id (`r/6628636`, `w/107637324`). Intersected with `--area` when both given; outputs get an `_osm-` slug so they never shadow unslugged runs. Match is exact + case-insensitive; needs the PBF already downloaded. |
+| `--josm [HOST:PORT]` | After conflation, open the PBF (reference layer) plus the `ambiguous`, `new`, `osm-only` and `conflated` review files in JOSM via remote control (default `localhost:8111`). Enable remote control in JOSM preferences first. Without `--josm` or `--no-josm`, this happens automatically when JOSM answers on the default host, only for provinces conflated in this run (an explicit `--josm` opens every selected province). Each review file opens as an editable copy `<file>_edited.osm` (created once, never overwritten; a warning appears when it is older than the regenerated original, delete it for a fresh copy), bound to its file so Cmd+S saves in place; upload stays disabled (`upload="never"`). Each run adds fresh layers — close stale ones manually (JOSM has no delete-layer remote call). |
+| `--no-josm` | Never open layers in JOSM, even when it is running. |
+| `--overwrite conflate` / `--overwrite pbf` | Re-run match logic on cached PBF / re-download the PBF |
+| `--review-identical` | Keep zero-delta matches (IoU≥`identical_iou`, no tag changes) in `_conflated.osm` |
+
 #### Output files
 
 | File | Contents |
@@ -164,7 +175,7 @@ Shared-node cases also carry:
 
 #### Reviewing `_ambiguous.osm` in JOSM
 
-1. Open `_ambiguous.osm` and the area PBF as separate layers.
+1. Open `_ambiguous.osm` and the area PBF as separate layers — `dbsn-conflate --josm` does this for you.
 2. For shared-node cases: look up the `note:conflate:shared_node_ids` values in the PBF layer to see which adjacent ways use those nodes.
 3. Run `uv run dbsn-triage <path>/_ambiguous.osm` and decide each feature interactively (paste `ref:dbsn=…` values straight from JOSM for batch triage):
 
