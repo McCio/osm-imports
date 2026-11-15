@@ -217,7 +217,15 @@ Alternatively edit `_osm_only_edited.osm`, save, re-run `dbsn-conflate`. A featu
 
 - a feature you delete is deleted in OSM;
 - a feature whose tags you change gets a tag-only modify (`-key` deletions recorded in `_resolutions.json`, keyed by `wXXX`);
-- a feature whose shape you change is moved in place (same way and node ids, `geometry` WKT recorded in `_resolutions.json`), and the changeset names no `source` for it. If its nodes are tagged or shared with a highway, waterway, railway or natural way, the tag edit still goes out, the shape does not: your shape appears in `_ambiguous.osm` with `note:conflate=geometry_unsafe`. Relation shapes are not moved.
+- a feature whose shape you change is moved in place (same way id and history, `geometry` WKT recorded in `_resolutions.json`), and the changeset names no `source` for it. Relation shapes are not moved: the tag edit goes out, your shape appears in `_ambiguous.osm` with `note:conflate=geometry_unsafe`.
+
+**Unsafe nodes.** A node of the way that is tagged, or shared with a highway, waterway, railway, natural, public transport or route way, is written as a node of its own with its OSM tags, `osm:id=nXXX`, `note:conflate:unsafe=detach` and `note:conflate:unsafe_reason` (`tagged`, `shared`, `tagged+shared`; `shared_node_ids` names the other ways). Find them in JOSM with `type:node "note:conflate:unsafe"=*`. What happens to such a node when your edit moves its vertex is the value of `note:conflate:unsafe`:
+
+- `detach` (default): the way gets a new node there and the OSM node is left alone (it keeps its tags and its other ways). An unsafe node you did not move is never touched, whatever its value. A node you remove from the layer is detached too;
+- `carry`: the OSM node stays in the way and moves to where you drew it, whatever other way it is shared with (the run prints a `[carry  ]` line for those). Its tags, as shown in the layer, are written with it;
+- `delete`: the node is deleted in OSM (`<delete if-unused>`, so a node still used by another way survives), explicit only. The way keeps its shape with a new node at that vertex.
+
+Two unsafe nodes at one coordinate stay standalone, with `overlap:nXXX` appended to `note:conflate:unsafe_reason` and a warning; neither is carried automatically. Legacy-import replacements detach unsafe nodes the same way. Only `_osm_only_edited.osm` shows these nodes for now.
 
 #### Re-running after triage
 

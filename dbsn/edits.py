@@ -36,6 +36,43 @@ class _Feature:
     note: str = ""  # `note:conflate`: names the OSM mate (`osm=wXXX[,merged=a|b]`) of a `_conflated` pair
     keep_osm: str | None = None  # the user's `keep_osm` tag, an instruction rather than an OSM tag
     deleted: bool = False  # a JOSM `action="delete"` primitive
+    vertices: tuple[str, ...] = ()  # `osm:id` (nXXX) of the way's identity nodes: its unsafe OSM nodes
+
+
+@dataclass
+class _Node:
+    lon: float
+    lat: float
+    tags: dict[str, str]
+
+
+def _identity_nodes(path: Path) -> dict[str, _Node]:
+    """`nXXX` → node, for every node of an OSM file carrying `osm:id=nXXX` (JOSM renumbering is harmless)."""
+    out: dict[str, _Node] = {}
+    for n in ET.parse(path).getroot().iter("node"):
+        tags = {t.get("k"): t.get("v") for t in n.iter("tag")}
+        if tags.get("osm:id", "").startswith("n"):
+            out[tags["osm:id"]] = _Node(float(n.get("lon")), float(n.get("lat")), tags)
+    return out
+
+
+def _node_decisions(feat: _Feature, before: dict[str, _Node], after: dict[str, _Node]) -> dict[str, object]:
+    """`carry_nodes` / `delete_nodes` entries for the unsafe nodes of `feat` the user marked `note:conflate:unsafe`.
+
+    `detach` is the default and records nothing; a node missing from the edited file is detached too, never deleted.
+    `carry` counts only for a node the user moved (an unmoved vertex is reused as is).
+    """
+    carry: dict[str, dict] = {}
+    delete: list[str] = []
+    for nid in feat.vertices:
+        b, a = before[nid], after.get(nid)
+        action = a.tags.get("note:conflate:unsafe") if a else None
+        if action == "delete":
+            delete.append(nid)
+        elif action == "carry" and (abs(a.lon - b.lon) > _GEOM_TOLERANCE or abs(a.lat - b.lat) > _GEOM_TOLERANCE):
+            tags = {k: v for k, v in a.tags.items() if k != "osm:id" and not _is_conflate_meta(k)}
+            carry[nid] = {"lon": a.lon, "lat": a.lat, "tags": tags}
+    return {**({"carry_nodes": carry} if carry else {}), **({"delete_nodes": delete} if delete else {})}
 
 
 def _read_features(path: Path, key: str = "ref:dbsn") -> dict[str, _Feature]:
@@ -45,6 +82,10 @@ def _read_features(path: Path, key: str = "ref:dbsn") -> dict[str, _Feature]:
     rings = {
         w.get("id"): Polygon([nodes[nd.get("ref")] for nd in w.iter("nd")])
         for w in root.iter("way")
+    }
+    identity = {  # xml node id → nXXX
+        n.get("id"): v for n in root.iter("node")
+        for t in n.iter("tag") if t.get("k") == "osm:id" and (v := t.get("v")).startswith("n")
     }
     out: dict[str, _Feature] = {}
     for elem in root:
@@ -66,6 +107,8 @@ def _read_features(path: Path, key: str = "ref:dbsn") -> dict[str, _Feature]:
             tags.get("note:conflate", ""),
             tags.get("keep_osm"),
             elem.get("action") == "delete",
+            tuple(identity[ref] for nd in elem.iter("nd") if (ref := nd.get("ref")) in identity)
+            if elem.tag == "way" else (),
         )
     return out
 
@@ -162,6 +205,8 @@ def diff_edited(original: Path, edited: Path, kind: str) -> dict[str, dict]:
     """Resolution entries (`dbsn:<classid>` → entry) for what the user changed in `edited`."""
     key = "osm:id" if kind == "osm_only" else "ref:dbsn"
     before, after = _read_features(original, key), _read_features(edited, key)
+    nodes_before = _identity_nodes(original) if kind == "osm_only" else {}
+    nodes_after = _identity_nodes(edited) if kind == "osm_only" else {}
     entries: dict[str, dict] = {}
     for ref, feat in before.items():
         gone = ref not in after or after[ref].deleted
@@ -180,6 +225,7 @@ def diff_edited(original: Path, edited: Path, kind: str) -> dict[str, dict]:
             entry["tags"] = overrides
         if not feat.geom.normalize().equals_exact(after[ref].geom.normalize(), _GEOM_TOLERANCE):
             entry["geometry"] = to_wkt(after[ref].geom, rounding_precision=7)
+        entry.update(_node_decisions(feat, nodes_before, nodes_after))
         if entry and kind == "osm_only":
             entries[ref] = {"decision": "tag_update", **entry}
         elif entry:

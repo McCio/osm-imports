@@ -100,12 +100,105 @@ def test_osm_geometry_edit_moves_the_ways_own_nodes_in_place():
     assert {n for n, *_ in node_modifies} == {1, 2, 3, 4}
 
 
-def test_osm_geometry_edit_is_refused_when_a_node_is_tagged():
+def test_osm_geometry_edit_detaches_a_tagged_node_by_default():
     shifted = box(12.00001, 45.0, 12.00011, 45.0001)
     outcome = conflate.osm_geometry_edit_osc("w1", 7, {"building": "yes"}, shifted, box(12.0, 45.0, 12.0001, 45.0001),
                                              **_osm_way_graph(tagged_nodes={2}))
 
+    assert outcome is not None
+    node_creates, node_modifies, node_deletes, (_, _, nd_refs, _) = outcome
+    assert 2 not in nd_refs  # the way leaves the tagged node...
+    assert len(node_creates) == 1 and node_creates[0][0] in nd_refs  # ...for a new one at its vertex
+    assert {n for n, *_ in node_modifies} == {1, 3, 4}  # the tagged node is not moved
+    assert node_deletes == []  # nor deleted: it keeps its tags in OSM
+
+
+def test_unsafe_identity_nodes_name_the_node_its_tags_and_why_it_is_unsafe():
+    graph = _osm_way_graph(
+        tagged_nodes={2: {"entrance": "yes"}, 3: {"barrier": "gate"}},  # node 3 is also on the road
+        way_nodes={1: [1, 2, 3, 4, 1], 9: [3, 5]},
+        node_coords={1: (12.0, 45.0), 2: (12.0001, 45.0), 3: (12.0001, 45.0001), 4: (12.0, 45.0001), 5: (12.1, 45.1)},
+        node_to_ways={1: [1], 2: [1], 3: [1, 9], 4: [1], 5: [9]},
+        way_tags={1: {"building": "yes"}, 9: {"highway": "residential"}},
+    )
+
+    nodes = conflate.unsafe_identity_nodes(
+        ["w1"], graph["way_nodes"], graph["node_coords"], graph["tagged_nodes"], graph["node_to_ways"],
+        graph["way_tags"],
+    )
+
+    assert nodes == [
+        ("n2", 12.0001, 45.0, {"entrance": "yes", "note:conflate:unsafe": "detach",
+                               "note:conflate:unsafe_reason": "tagged"}),
+        ("n3", 12.0001, 45.0001, {"barrier": "gate", "note:conflate:unsafe": "detach",
+                                  "note:conflate:unsafe_reason": "tagged+shared",
+                                  "note:conflate:shared_node_ids": "w9"}),
+    ]
+
+
+def test_node_decisions_come_from_the_carry_and_delete_entries_of_a_resolution():
+    res = {"carry_nodes": {"n2": {"lon": 12.1, "lat": 45.2, "tags": {"entrance": "yes"}}}, "delete_nodes": ["n7"]}
+
+    assert conflate.node_decisions(res) == {
+        2: conflate.NodeDecision("carry", 12.1, 45.2, {"entrance": "yes"}),
+        7: conflate.NodeDecision("delete", 0.0, 0.0, {}),
+    }
+    assert conflate.node_decisions({}) == {}
+
+
+def test_osc_write_keeps_the_tags_of_a_modified_node(tmp_path):
+    path = tmp_path / "changes.osc"
+    conflate._osc_write(path, [], [], [],
+                        node_modifies=[(2, 3, 12.00011, 45.0, {"entrance": "yes", "note:conflate:unsafe": "carry"})],
+                        geom_way_modifies=[("w1", 7, [1, 2, 3, 4], {"building": "yes"})])
+
+    node = ET.parse(path).getroot().find("modify/node[@id='2']")
+    assert node.attrib["version"] == "3" and node.attrib["lon"] == "12.0001100"
+    assert {t.attrib["k"]: t.attrib["v"] for t in node.findall("tag")} == {"entrance": "yes"}  # note keys never upload
+
+
+def test_osm_geometry_edit_leaves_relations_to_review():
+    shifted = box(12.00001, 45.0, 12.00011, 45.0001)
+    outcome = conflate.osm_geometry_edit_osc("r1", 7, {"building": "yes"}, shifted, box(12.0, 45.0, 12.0001, 45.0001),
+                                             **_osm_way_graph())
+
     assert outcome is None
+
+
+def test_osm_geometry_edit_deletes_a_tagged_node_only_when_decided():
+    shifted = box(12.00001, 45.0, 12.00011, 45.0001)
+    delete = {2: conflate.NodeDecision("delete", 12.0001, 45.0, {})}
+    outcome = conflate.osm_geometry_edit_osc("w1", 7, {"building": "yes"}, shifted, box(12.0, 45.0, 12.0001, 45.0001),
+                                             decisions=delete, **_osm_way_graph(tagged_nodes={2}))
+
+    node_creates, node_modifies, node_deletes, (_, _, nd_refs, _) = outcome
+    assert node_deletes == [(2, 3)]  # (id, version): emitted as `<delete if-unused>`, so a shared node survives
+    assert 2 not in nd_refs and len(node_creates) == 1  # the way still gets a node at that vertex
+    assert 2 not in {n for n, *_ in node_modifies}
+
+
+def test_osm_geometry_edit_keeps_an_unsafe_node_the_user_did_not_move():
+    edited = box(12.0, 45.0, 12.00011, 45.0001)  # only the east side moved: node 1 (12.0, 45.0) is still drawn there
+    outcome = conflate.osm_geometry_edit_osc("w1", 7, {"building": "yes"}, edited, box(12.0, 45.0, 12.0001, 45.0001),
+                                             **_osm_way_graph(tagged_nodes={1: {"entrance": "yes"}}))
+
+    node_creates, node_modifies, _, (_, _, nd_refs, _) = outcome
+    assert 1 in nd_refs  # still the way's node: the road or POI connection is untouched
+    assert 1 not in {n for n, *_ in node_modifies}
+    assert node_creates == []
+
+
+def test_osm_geometry_edit_carries_a_tagged_node_with_its_tags():
+    shifted = box(12.00001, 45.0, 12.00011, 45.0001)
+    carry = {2: conflate.NodeDecision("carry", 12.00011, 45.0, {"entrance": "yes"})}  # node 2 drawn ~1 m east
+    outcome = conflate.osm_geometry_edit_osc("w1", 7, {"building": "yes"}, shifted, box(12.0, 45.0, 12.0001, 45.0001),
+                                             decisions=carry, **_osm_way_graph(tagged_nodes={2}))
+
+    node_creates, node_modifies, _, (_, _, nd_refs, _) = outcome
+    assert sorted(nd_refs) == [1, 2, 3, 4]  # the OSM node is reused: no new node
+    assert node_creates == []
+    # an osmChange node modify replaces all tags: the tagged node must carry them or the upload strips them
+    assert (2, 3, 12.00011, 45.0, {"entrance": "yes"}) in node_modifies
 
 
 # ---------------------------------------------------------------------------

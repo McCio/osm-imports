@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.error import URLError
 from urllib.parse import quote, urlencode
 
@@ -276,7 +276,7 @@ class _AreaHandler(osmium.SimpleHandler):
         self._clip = clip
         self._relevant_kv = relevant_kv
         self.node_way_count: dict[int, int] = {}
-        self.tagged_nodes: set[int] = set()
+        self.tagged_nodes: dict[int, dict] = {}  # node_id → tags, for every tagged node
         self.way_nodes: dict[int, list[int]] = {}   # way_id → [node_refs]
         self.way_tags: dict[int, dict] = {}         # way_id → tags (all ways)
         self.node_coords: dict[int, tuple[float, float]] = {}  # node_id → (lon, lat)
@@ -285,7 +285,7 @@ class _AreaHandler(osmium.SimpleHandler):
     def node(self, n):
         self.node_versions[n.id] = n.version
         if n.tags:
-            self.tagged_nodes.add(n.id)
+            self.tagged_nodes[n.id] = dict(n.tags)
 
     def way(self, w):
         refs = []
@@ -363,7 +363,7 @@ def _parse_dbsn(osm_path: Path, clip=None) -> list[tuple[str, dict, Any]]:
 def _parse_osm(pbf_path: Path, clip=None, relevant_kv: frozenset[tuple[str, str]] = frozenset()) -> tuple[
     list[tuple[str, dict, Any, int]],  # (feat_id, tags, geom, version) — building=* features
     dict[int, int],                    # node_way_count
-    set[int],                          # tagged_node_ids
+    dict[int, dict],                   # tagged_nodes: node_id → tags
     dict[int, list[int]],              # way_nodes: way_id → [node_refs]
     dict[int, dict],                   # way_tags: way_id → tags (all ways)
     dict[int, tuple[float, float]],    # node_coords: node_id → (lon, lat)
@@ -408,20 +408,71 @@ def _way_nodes_safe(
     refs = way_nodes.get(way_id)
     if refs is None:
         return False
-    for ref in refs:
-        if ref in tagged_nodes:
-            return False
-        if node_way_count.get(ref, 0) <= 1:
+    return not any(_node_unsafe(ref, way_id, tagged_nodes, node_to_ways, way_tags) for ref in refs)
+
+
+def _node_unsafe(
+    ref: int,
+    way_id: int,
+    tagged_nodes: set[int],
+    node_to_ways: dict[int, list[int]],
+    way_tags: dict[int, dict],
+) -> bool:
+    """A node of `way_id` that is tagged, or shared with a way whose keys make topology matter."""
+    return ref in tagged_nodes or any(
+        adj != way_id and any(k in _UNSAFE_ADJACENT_KEYS for k in way_tags.get(adj, {}))
+        for adj in node_to_ways.get(ref, [])
+    )
+
+
+def unsafe_identity_nodes(
+    osm_ids,
+    way_nodes: dict[int, list[int]],
+    node_coords: dict[int, tuple[float, float]],
+    tagged_nodes: dict[int, dict],
+    node_to_ways: dict[int, list[int]],
+    way_tags: dict[int, dict],
+) -> list[tuple[str, float, float, dict]]:
+    """Identity nodes (`write_osm_items(identity_nodes=)`) for the unsafe nodes of the given OSM ways.
+
+    Each carries its OSM tags, the default decision `note:conflate:unsafe=detach` and why it is unsafe.
+    """
+    out: list[tuple[str, float, float, dict]] = []
+    seen: set[int] = set()
+    for osm_id in osm_ids:
+        if not osm_id.startswith("w"):
             continue
-        for adj_wid in node_to_ways.get(ref, []):
-            if adj_wid == way_id:
+        way_id = int(osm_id[1:])
+        for ref in way_nodes.get(way_id, []):
+            if ref in seen or ref not in node_coords:
                 continue
-            if any(k in _UNSAFE_ADJACENT_KEYS for k in way_tags.get(adj_wid, {})):
-                return False
-    return True
+            if not _node_unsafe(ref, way_id, tagged_nodes, node_to_ways, way_tags):
+                continue
+            seen.add(ref)
+            roads = [adj for adj in node_to_ways.get(ref, [])
+                     if adj != way_id and any(k in _UNSAFE_ADJACENT_KEYS for k in way_tags.get(adj, {}))]
+            reason = "+".join([*(["tagged"] if ref in tagged_nodes else []), *(["shared"] if roads else [])])
+            tags = {**tagged_nodes.get(ref, {}), "note:conflate:unsafe": "detach",
+                    "note:conflate:unsafe_reason": reason,
+                    **({"note:conflate:shared_node_ids": ";".join(f"w{r}" for r in roads)} if roads else {})}
+            out.append((f"n{ref}", *node_coords[ref], tags))
+    return out
 
 
 _M_PER_DEG = 111_000.0  # good enough for Italy
+
+
+def _same_place(a: tuple[float, float], b: tuple[float, float]) -> bool:
+    """OSM and its XML files keep 1e-7 degrees."""
+    return abs(a[0] - b[0]) < 5e-8 and abs(a[1] - b[1]) < 5e-8
+
+
+class NodeDecision(NamedTuple):
+    """What to do with an unsafe OSM node of a hand-edited way; `lon`/`lat`/`tags` are as drawn in the edited file."""
+    action: str  # "carry" | "delete"; an unsafe node without a decision is detached
+    lon: float
+    lat: float
+    tags: dict
 
 
 def _update_geometry_osc(
@@ -438,9 +489,10 @@ def _update_geometry_osc(
     node_to_ways: dict[int, list[int]],
     way_tags: dict[int, dict],
     next_node_id: list[int],  # mutable shared counter; decrements with each new node
+    decisions: dict[int, NodeDecision] | None = None,
 ) -> tuple[
     list[tuple[int, float, float]],         # node creates: (id, lon, lat)
-    list[tuple[int, int, float, float]],    # node modifies: (node_id, version, lon, lat)
+    list[tuple[int, int, float, float, dict]],  # node modifies: (node_id, version, lon, lat, tags)
     list[tuple[int, int]],                  # node deletes: (node_id, version)
     tuple[str, int, list[int], dict],       # way modify: (osm_id, version, nd_refs, tags)
 ] | None:
@@ -473,7 +525,10 @@ def _update_geometry_osc(
     # MxN cost matrix padded to square for linear_sum_assignment
     size = max(M, N)
     cost = np.full((size, size), 1e9)
-    osm_pos = [node_coords[r] for r in osm_ring]
+    decisions = decisions or {}
+    # a carried node is placed by where the user drew it, not where OSM has it
+    osm_pos = [(decisions[r].lon, decisions[r].lat) if r in decisions and decisions[r].action == "carry"
+               else node_coords[r] for r in osm_ring]
     for di, (dlon, dlat) in enumerate(dbsn_coords):
         for ni, (olon, olat) in enumerate(osm_pos):
             dx, dy = (dlon - olon) * _M_PER_DEG, (dlat - olat) * _M_PER_DEG
@@ -482,7 +537,7 @@ def _update_geometry_osc(
     row_ind, col_ind = linear_sum_assignment(cost)
 
     node_creates: list[tuple[int, float, float]] = []
-    node_modifies: list[tuple[int, int, float, float]] = []
+    node_modifies: list[tuple[int, int, float, float, dict]] = []
     matched_dbsn: set[int] = set()
     matched_osm: set[int] = set()
     nd_refs: dict[int, int] = {}  # di → node_id
@@ -500,14 +555,19 @@ def _update_geometry_osc(
         matched_osm.add(ni)
         dlon, dlat = dbsn_coords[di]
         ref = osm_ring[ni]
-        unsafe = any(
-            adj != way_id and any(k in _UNSAFE_ADJACENT_KEYS for k in way_tags.get(adj, {}))
-            for adj in node_to_ways.get(ref, [])
-        )
-        if unsafe:
+        decision = decisions.get(ref)
+        if decision and decision.action == "carry":  # decided: reused and moved whatever else it is attached to
+            node_modifies.append((ref, node_versions.get(ref, 1), dlon, dlat, decision.tags))
+            nd_refs[di] = ref
+        elif decision and decision.action == "delete":
             nd_refs[di] = alloc(dlon, dlat)
+        elif _node_unsafe(ref, way_id, tagged_nodes, node_to_ways, way_tags):
+            if _same_place(node_coords[ref], (dlon, dlat)):
+                nd_refs[di] = ref  # not moved by the edit: the node keeps its tags and its other ways
+            else:
+                nd_refs[di] = alloc(dlon, dlat)
         else:
-            node_modifies.append((ref, node_versions.get(ref, 1), dlon, dlat))
+            node_modifies.append((ref, node_versions.get(ref, 1), dlon, dlat, {}))
             nd_refs[di] = ref
 
     for di in range(M):
@@ -516,10 +576,10 @@ def _update_geometry_osc(
 
     node_deletes: list[tuple[int, int]] = []
     for ni in range(N):
-        if ni not in matched_osm:
-            ref = osm_ring[ni]
-            if node_way_count.get(ref, 0) <= 1 and ref not in tagged_nodes:
-                node_deletes.append((ref, node_versions.get(ref, 1)))
+        ref = osm_ring[ni]
+        decided = ref in decisions and decisions[ref].action == "delete"
+        if decided or (ni not in matched_osm and node_way_count.get(ref, 0) <= 1 and ref not in tagged_nodes):
+            node_deletes.append((ref, node_versions.get(ref, 1)))
 
     return (
         node_creates,
@@ -527,6 +587,14 @@ def _update_geometry_osc(
         node_deletes,
         (osm_id, osm_version, [nd_refs[di] for di in range(M)], merged_tags),
     )
+
+
+def node_decisions(res: dict) -> dict[int, NodeDecision]:
+    """`NodeDecision`s of a resolutions entry (`carry_nodes` / `delete_nodes`, written by `edits`), by node id."""
+    out = {int(n[1:]): NodeDecision("carry", c["lon"], c["lat"], c["tags"])
+           for n, c in res.get("carry_nodes", {}).items()}
+    out.update({int(n[1:]): NodeDecision("delete", 0.0, 0.0, {}) for n in res.get("delete_nodes", [])})
+    return out
 
 
 def osm_geometry_edit_osc(
@@ -543,17 +611,18 @@ def osm_geometry_edit_osc(
     node_to_ways: dict[int, list[int]],
     way_tags: dict[int, dict],
     next_node_id: list[int],
+    decisions: dict[int, NodeDecision] | None = None,
 ):
-    """In-place way update for the shape the user drew over an OSM-only way, or None when its nodes are unsafe.
+    """In-place way update for the shape the user drew over an OSM-only way; unsafe nodes are detached.
 
-    None also covers relations and ways without node refs: the caller keeps the feature for review.
+    None covers relations and ways without node refs: the caller keeps the feature for review.
     """
-    if not _way_nodes_safe(osm_id, way_nodes, node_way_count, tagged_nodes, node_to_ways, way_tags):
+    if not osm_id.startswith("w"):
         return None
     return _update_geometry_osc(
         osm_id, osm_version, edit_geom, osm_geom, tags,
         way_nodes, node_coords, node_versions, node_way_count, tagged_nodes, node_to_ways, way_tags,
-        next_node_id,
+        next_node_id, decisions,
     )
 
 
@@ -648,7 +717,7 @@ def _osc_write(
     way_tag_modifies: list[tuple[str, int, dict]], # (osm_id, version, tags) — tag-only
     way_deletes: list[tuple[str, int]],           # (osm_id, version)
     node_creates: list[tuple[int, float, float]] = (),   # (id, lon, lat) — from geom updates
-    node_modifies: list[tuple[int, int, float, float]] = (),  # (node_id, version, lon, lat)
+    node_modifies: list[tuple[int, int, float, float, dict]] = (),  # (node_id, version, lon, lat, tags)
     node_deletes: list[tuple[int, int]] = (),     # (node_id, version) — isolated removed nodes
     geom_way_modifies: list[tuple[str, int, list[int], dict]] = (),  # (osm_id, ver, nd_refs, tags)
     next_node_id: list[int] | None = None,        # counter for new building-create node IDs
@@ -697,11 +766,13 @@ def _osc_write(
     if has_modifies:
         modify_el = ET.SubElement(root, "modify")
         # Node moves first so way nd-refs resolve correctly
-        for node_id, version, lon, lat in node_modifies:
-            ET.SubElement(modify_el, "node", attrib={
+        for node_id, version, lon, lat, tags in node_modifies:
+            node_el = ET.SubElement(modify_el, "node", attrib={
                 "id": str(node_id), "version": str(version), "action": "modify",
                 "lat": f"{lat:.7f}", "lon": f"{lon:.7f}",
             })
+            for k, v in _osc_tags(tags, keep_source=True).items():  # a node modify replaces all tags
+                ET.SubElement(node_el, "tag", attrib={"k": k, "v": str(v)})
         # Way geometry updates (nd refs + tags)
         for osm_id, version, nd_refs, tags in geom_way_modifies:
             raw_id = osm_id[1:]
@@ -943,7 +1014,7 @@ def _run(
     osc_way_tag_modifies: list[tuple[str, int, dict]] = []
     osc_way_deletes: list[tuple[str, int]] = []
     osc_node_creates: list[tuple[int, float, float]] = []   # (id, lon, lat)
-    osc_node_modifies: list[tuple[int, int, float, float]] = []  # (node_id, ver, lon, lat)
+    osc_node_modifies: list[tuple[int, int, float, float, dict]] = []  # (node_id, ver, lon, lat, tags)
     osc_node_deletes: list[tuple[int, int]] = []             # (node_id, ver)
     osc_geom_modifies: list[tuple[str, int, list[int], dict]] = []  # (osm_id, ver, nd_refs, tags)
     geometry_sources: list[str] = []  # DBSN `source` of every way whose geometry is modified in place
@@ -1133,14 +1204,13 @@ def _run(
                         overlapping = _all_dbsn_ids[hi]
                         break
             if overlapping is not None:
-                # Refined DBSN supersedes raw import: in-place modify (keep way id)
-                # when nodes are safe, delete+create fallback otherwise
+                # Refined DBSN supersedes raw import: in-place modify (keep way id), unsafe nodes detached;
+                # delete+create only for a relation or a way without node refs
                 _, _, version = osm_by_id[osm_id]
                 final_tags = _normalise_osm_tags(dbsn_tags_by_id[overlapping])
                 dbsn_geom_l = dbsn_geom_by_id[overlapping]
                 geom_result = None
-                if _way_nodes_safe(osm_id, way_nodes, node_way_count, tagged_nodes,
-                                   node_to_ways, way_tags):
+                if osm_id.startswith("w"):
                     geom_result = _update_geometry_osc(
                         osm_id, version, dbsn_geom_l, osm_geom, final_tags,
                         way_nodes, node_coords, node_versions,
@@ -1217,11 +1287,16 @@ def _run(
             final_tags = _normalise_osm_tags(_apply_overrides(osm_tags, tag_overrides))
             dbsn_cid = res.get("dbsn_classid")
             # a shape the user drew over an OSM-only way (JOSM edit): moved in place when its nodes allow
-            edit_geom = from_wkt(res["geometry"]) if res.get("geometry") and not dbsn_cid else None
+            decisions = node_decisions(res)
+            edit_geom = None
+            if not dbsn_cid and res.get("geometry"):
+                edit_geom = from_wkt(res["geometry"])
+            elif not dbsn_cid and decisions:
+                edit_geom = osm_geom  # a node decision without a shape edit: the way keeps its own shape
             geom_result = edit_geom is not None and osm_geometry_edit_osc(
                 osm_id, version, final_tags, edit_geom, osm_geom,
                 way_nodes, node_coords, node_versions, node_way_count, tagged_nodes, node_to_ways, way_tags,
-                next_node_id,
+                next_node_id, decisions,
             )
             if geom_result:
                 nc, nm, nd, wm = geom_result
@@ -1230,10 +1305,14 @@ def _run(
                 osc_node_deletes.extend(nd)
                 osc_geom_modifies.append(wm)
                 conflated.append((final_tags, edit_geom))
+                for nid, decision in decisions.items():
+                    others = [f"w{w}" for w in node_to_ways.get(nid, []) if f"w{w}" != osm_id]
+                    if decision.action == "carry" and others:
+                        print(f"  [carry  ] n{nid} of {osm_id} is moved with {', '.join(others)}")
                 continue
             osc_way_tag_modifies.append((osm_id, version, final_tags))
             if edit_geom is not None:
-                # nodes shared or tagged: the tag edit goes out, the drawn shape stays in review
+                # a relation (or a way without node refs): the tag edit goes out, the drawn shape stays in review
                 ambiguous.append(({**final_tags, "osm:id": osm_id, "note:conflate": "geometry_unsafe"}, edit_geom))
             elif dbsn_cid and dbsn_cid in dbsn_geom_by_id:
                 # Geometry decision still open — re-expose both in ambiguous.osm for re-triage
@@ -1276,11 +1355,16 @@ def _run(
     if blocks:
         _blocks_geojson(blocks, _out(code, date, "_blocks.geojson", out_slug))
 
-    def _write_review(bucket, suffix: str) -> int:
-        return write_osm_items(_items(bucket), _out(code, date, suffix, out_slug), upload="never")
+    def _write_review(bucket, suffix: str, show_unsafe_nodes: bool = False) -> int:
+        identity = unsafe_identity_nodes(
+            [tags.get("osm:id", "") for tags, _ in bucket], way_nodes, node_coords, tagged_nodes, node_to_ways,
+            way_tags,
+        ) if show_unsafe_nodes else ()
+        return write_osm_items(_items(bucket), _out(code, date, suffix, out_slug), upload="never",
+                               identity_nodes=identity)
 
     n_new = _write_review(new_features, "_new.osm")
-    n_osm_only = _write_review(osm_only, "_osm_only.osm")
+    n_osm_only = _write_review(osm_only, "_osm_only.osm", show_unsafe_nodes=True)
     n_conflated = _write_review(conflated, "_conflated.osm")
     n_ambiguous = _write_review(ambiguous, "_ambiguous.osm")
     osc_all_creates = [*new_features, *osc_replace_creates]

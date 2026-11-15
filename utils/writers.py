@@ -118,8 +118,11 @@ def _patch_upload_attr(path: Path, value: str) -> None:
         )
 
 
-def write_osm_items(items, output_path: Path, bounds=None, upload: str | None = None) -> int:
-    """Write pre-translated (geom, tags) items to an OSM file with shared ID counters."""
+def write_osm_items(items, output_path: Path, bounds=None, upload: str | None = None, identity_nodes=()) -> int:
+    """Write pre-translated (geom, tags) items to an OSM file with shared ID counters.
+
+    `identity_nodes`: (osm_id, lon, lat, tags) OSM nodes shown as such (`osm:id` + their tags).
+    """
     node_ids = count(-1, -1)
     way_ids = count(-1, -1)
     rel_ids = count(-1, -1)
@@ -135,6 +138,22 @@ def write_osm_items(items, output_path: Path, bounds=None, upload: str | None = 
     written = 0
 
     with osmium.SimpleWriter(str(output_path), header=h) as writer:
+        by_place: defaultdict[tuple[float, float], list[tuple[str, dict]]] = defaultdict(list)
+        for osm_id, lon, lat, tags in identity_nodes:
+            by_place[(lon, lat)].append((osm_id, _safe_tags(tags)))
+        for (lon, lat), group in by_place.items():
+            for osm_id, tags in group:
+                if len(group) > 1:
+                    others = ";".join(f"overlap:{o}" for o, _ in group if o != osm_id)
+                    reason = tags.get("note:conflate:unsafe_reason")
+                    tags = {**tags, "note:conflate:unsafe_reason": f"{reason};{others}" if reason else others}
+                nid = next(node_ids)
+                writer.add_node(osmium.osm.mutable.Node(
+                    id=nid, location=osmium.osm.Location(lon, lat), tags={**tags, "osm:id": osm_id}))
+                if len(group) == 1:
+                    coord_map[(lon, lat)] = nid  # a vertex at the same place reuses it: the identity node wins
+            if len(group) > 1:  # no vertex can be told apart: it gets a plain node, the user resolves it
+                print(f"  [warn   ] {', '.join(o for o, _ in group)} overlap at {lon},{lat}: left standalone")
         for geom, tags in items:
             if geom["type"] == "Point":
                 lon, lat = geom["coordinates"][0], geom["coordinates"][1]

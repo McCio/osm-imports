@@ -172,6 +172,62 @@ def test_osm_only_geometry_edit_is_recorded_as_wkt_on_the_osm_id(tmp_path):
     assert from_wkt(entries["w11"]["geometry"]).equals(moved)
 
 
+def _osm_only_with_nodes(path, corners, unsafe, **way_tags):
+    """An `_osm_only` file as the writer emits it for way w11: a closed way whose unsafe vertices are identity
+    nodes (`osm:id=nXXX`, the OSM tags, a `note:conflate:unsafe` decision); `unsafe` is {corner index: tags}."""
+    nodes, refs = [], []
+    for i, (lon, lat) in enumerate(corners):
+        tags = "".join(f'<tag k="{k}" v="{v}"/>' for k, v in unsafe.get(i, {}).items())
+        nodes.append(f'<node id="{-1 - i}" lon="{lon}" lat="{lat}" version="1">{tags}</node>')
+        refs.append(f'<nd ref="{-1 - i}"/>')
+    tags = {"building": "yes", "osm:id": "w11", **way_tags}
+    way_tags_xml = "".join(f'<tag k="{k}" v="{v}"/>' for k, v in tags.items())
+    path.write_text(
+        f'<?xml version="1.0"?><osm version="0.6" upload="never">{"".join(nodes)}'
+        f'<way id="-100" version="1">{"".join(refs)}<nd ref="-1"/>{way_tags_xml}</way></osm>',
+        encoding="utf-8",
+    )
+
+
+_SQUARE = [(12.0, 45.0), (12.0001, 45.0), (12.0001, 45.0001), (12.0, 45.0001)]
+_SQUARE_EAST = [(lon + 0.00001, lat) for lon, lat in _SQUARE]  # ~1 m east
+_ENTRANCE = {"osm:id": "n2", "entrance": "yes", "note:conflate:unsafe": "detach", "note:conflate:unsafe_reason": "tagged"}
+
+
+def test_osm_only_moved_unsafe_vertex_tagged_carry_is_recorded_with_its_tags(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _osm_only_with_nodes(original, _SQUARE, {1: _ENTRANCE})
+    _osm_only_with_nodes(edited, _SQUARE_EAST, {1: {**_ENTRANCE, "note:conflate:unsafe": "carry"}})
+
+    entry = diff_edited(original, edited, "osm_only")["w11"]
+
+    assert entry["decision"] == "tag_update"
+    assert entry["carry_nodes"] == {"n2": {"lon": 12.00011, "lat": 45.0, "tags": {"entrance": "yes"}}}
+
+
+@pytest.mark.parametrize(("shape", "node_tags"), [
+    (_SQUARE_EAST, _ENTRANCE),                                          # moved, left on the default detach
+    (_SQUARE_EAST, {}),                                                 # moved, node removed from the file: detach
+    (_SQUARE, {**_ENTRANCE, "note:conflate:unsafe": "carry"}),          # carry, but unmoved: nothing to decide
+], ids=["moved-detach", "moved-node-removed", "unmoved-carry"])
+def test_osm_only_unsafe_vertex_without_a_carry_decision_records_no_carry(tmp_path, shape, node_tags):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _osm_only_with_nodes(original, _SQUARE, {1: _ENTRANCE})
+    _osm_only_with_nodes(edited, shape, {1: node_tags})
+
+    entries = diff_edited(original, edited, "osm_only")
+
+    assert "carry_nodes" not in entries.get("w11", {})
+
+
+def test_osm_only_unsafe_vertex_tagged_delete_is_recorded(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _osm_only_with_nodes(original, _SQUARE, {1: _ENTRANCE})
+    _osm_only_with_nodes(edited, _SQUARE_EAST, {1: {**_ENTRANCE, "note:conflate:unsafe": "delete"}})
+
+    assert diff_edited(original, edited, "osm_only")["w11"]["delete_nodes"] == ["n2"]
+
+
 def test_absorb_picks_up_osm_only_edits(tmp_path):
     original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
     _write(original, [_osm("w11", A)])
