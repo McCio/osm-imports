@@ -150,6 +150,7 @@ Useful flags:
 | `--no-josm` | Never open layers in JOSM, even when it is running. |
 | `--overwrite conflate` / `--overwrite pbf` | Re-run match logic on cached PBF / re-download the PBF |
 | `--review-identical` | Keep zero-delta matches (IoU≥`identical_iou`, no tag changes) in `_conflated.osm` |
+| `--apply-edits` / `--no-apply-edits` | Default on. Before regenerating, absorb edits saved in `<file>_edited.osm` into `_resolutions.json` (`_new` only for now), then replace the `_edited` copy with a fresh one. Unsaved JOSM edits are not on disk and cannot be absorbed. |
 
 #### Output files
 
@@ -191,6 +192,12 @@ On save, decisions are written to `_resolutions.json` and conflation re-runs aut
 #### Reviewing `_new.osm` in JOSM
 
 New features are auto-created on upload. To suppress a new building (e.g. it was demolished and OSM is already correct), record `skip` interactively in `dbsn-triage` — look it up via `dbsn:<classid>` or batch-paste `ref:dbsn=…` values straight from JOSM. On the next conflation run, skipped DBSN IDs are excluded from `_new.osm`.
+
+Alternatively edit the layer directly. `dbsn-conflate --josm` opens `_new_edited.osm`; edit it and save (Cmd+S), then re-run `dbsn-conflate` (`--apply-edits` is on by default). The edited layer is the desired end state:
+
+- a feature you delete is skipped (not created);
+- a feature whose tags or shape you change is created with your tags and shape (`geometry` WKT and `-key` tag deletions are recorded in `_resolutions.json`);
+- features without changes need nothing. `note:*` tags are ignored.
 
 #### Reviewing `_osm_only.osm`
 

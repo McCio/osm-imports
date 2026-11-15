@@ -12,6 +12,7 @@ from shapely.geometry import box
 from dbsn import conflate
 from dbsn.conflate import (
     JOSM_DEFAULT_HOST,
+    apply_new_resolution,
     compute_blocks,
     edited_sibling,
     ensure_edited_copy,
@@ -45,6 +46,26 @@ def test_zero_delta_merged_adds_tags_not_identical():
 
 def test_zero_delta_threshold_override():
     assert is_zero_delta(0.90, {"building": "yes"}, {"building": "yes"}, identical_iou=0.9)
+
+# ---------------------------------------------------------------------------
+# Resolutions applied to features about to be created
+# ---------------------------------------------------------------------------
+
+def test_new_resolution_overrides_tags_and_geometry():
+    moved = box(1, 1, 2, 2)
+    tags, geom = apply_new_resolution(
+        {"building": "yes", "height": "5"}, box(0, 0, 1, 1),
+        {"tags": {"name": "X", "-height": ""}, "geometry": moved.wkt},
+    )
+    assert tags == {"building": "yes", "name": "X"}
+    assert geom.equals(moved)
+
+
+def test_new_resolution_without_geometry_keeps_geometry():
+    original = box(0, 0, 1, 1)
+    _, geom = apply_new_resolution({"building": "yes"}, original, {"tags": {"name": "X"}})
+    assert geom is original
+
 
 # ---------------------------------------------------------------------------
 # Blocks (spatial clustering of conflation outcome buckets)

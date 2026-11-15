@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -18,7 +20,7 @@ import osmium
 import osmium.geom
 import yaml
 from scipy.optimize import linear_sum_assignment
-from shapely import STRtree, from_wkb
+from shapely import STRtree, from_wkb, from_wkt
 from shapely.geometry import MultiPolygon, Polygon
 from shapely.geometry import mapping as shapely_mapping
 from shapely.ops import unary_union
@@ -38,6 +40,7 @@ from dbsn.common import (
 from dbsn.convert import ConvertTask
 from dbsn.download_pbf import DownloadPbfTask, find_pbf
 from dbsn.download_pbf import _normalize as _pbf_normalize
+from dbsn.edits import absorb_edits, edited_sibling, pending_edits
 from dbsn.legacy_imports import (
     compile_patterns,
     fetch_changeset_meta,
@@ -158,19 +161,15 @@ def josm_open_file_url(path: Path, host: str) -> str:
     return f"http://{host}/open_file?filename={quote(str(Path(path).resolve()), safe='')}"
 
 
-def edited_sibling(path: Path) -> Path:
-    """`X_conflated.osm` -> `X_conflated_edited.osm`, the copy the user edits in JOSM."""
-    return path.with_name(f"{path.stem}_edited{path.suffix}")
-
-
 def ensure_edited_copy(path: Path) -> Path:
     """Create the `_edited` sibling by byte copy (keeps upload="never") unless it exists.
 
-    Never overwrites: an existing sibling holds the user's edits.
+    Never overwrites: an existing sibling holds the user's edits. The copy keeps the
+    original's mtime, so only a later JOSM save marks it as edited (`pending_edits`).
     """
     edited = edited_sibling(path)
     if not edited.exists():
-        edited.write_bytes(path.read_bytes())
+        shutil.copy2(path, edited)
     return edited
 
 
@@ -542,6 +541,15 @@ def _osc_tags(tags: dict) -> dict:
             if k not in _OSC_STRIP and not k.startswith("note:conflate:") and not k.startswith("-")}
 
 
+def apply_new_resolution(tags: dict, geom, res: dict) -> tuple[dict, Any]:
+    """Apply a `dbsn:<id>` resolution (tag overrides, geometry WKT) to a feature about to be created."""
+    if res.get("tags"):
+        tags = _apply_overrides(tags, res["tags"])
+    if res.get("geometry"):
+        geom = from_wkt(res["geometry"])
+    return tags, geom
+
+
 def _apply_overrides(base: dict, overrides: dict) -> dict:
     """Merge overrides into base; keys starting with '-' delete the corresponding base key."""
     result = dict(base)
@@ -788,15 +796,14 @@ def _run(
     resolved_osm_ids = set(resolutions)
     resolved_dbsn_ids: set[str] = set()
     skipped_dbsn_ids: set[str] = set()
-    new_tag_overrides: dict[str, dict] = {}  # dbsn_id → tag overrides for new features
+    new_resolutions: dict[str, dict] = {}  # dbsn_id → tag/geometry overrides for new features
     for key, res in resolutions.items():
         decision = res.get("decision")
         if key.startswith("dbsn:"):
             dbsn_id_key = key.removeprefix("dbsn:")
             if decision == "skip":
                 skipped_dbsn_ids.add(dbsn_id_key)
-            if res.get("tags"):
-                new_tag_overrides[dbsn_id_key] = res["tags"]
+            new_resolutions[dbsn_id_key] = res
         cid = res.get("dbsn_classid") or res.get("dbsn_id")
         if cid:
             resolved_dbsn_ids.add(cid)
@@ -943,9 +950,9 @@ def _run(
     for dbsn_id in result.dbsn_only:
         dbsn_tags = _normalise_osm_tags(dbsn_tags_by_id[dbsn_id])
         tagged = {**dbsn_tags, "ref:dbsn": dbsn_id}
-        if dbsn_id in new_tag_overrides:
-            tagged = _apply_overrides(tagged, new_tag_overrides[dbsn_id])
-        new_features.append((tagged, dbsn_geom_by_id[dbsn_id]))
+        tagged, geom = apply_new_resolution(tagged, dbsn_geom_by_id[dbsn_id],
+                                            new_resolutions.get(dbsn_id, {}))
+        new_features.append((tagged, geom))
 
     # Near-miss → ambiguous
     for dbsn_id, osm_id in result.near_miss:
@@ -1219,7 +1226,9 @@ class ConflateTask(Task):
         extend: bool = True,
         review_identical: bool = False,
         osm_area: str | None = None,
+        apply_edits: bool = True,
     ) -> None:
+        self._apply_edits = apply_edits
         self._prov = prov
         self._sources = sources_by_code
         self._overwrite_steps = overwrite_steps
@@ -1234,16 +1243,25 @@ class ConflateTask(Task):
     def name(self) -> str:
         return f"conflate:{self._prov['code']}"
 
+    def _review_files(self) -> list[Path]:
+        code, date = self._prov["code"], self._prov["date"]
+        _, out_slug = _slugs(self._area, self._osm_area)
+        suffixes = ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm")
+        return [_out(code, date, s, out_slug) for s in suffixes]
+
+    def _pending_edits(self) -> list[Path]:
+        review = [f for f in self._review_files() if f.exists()]
+        return pending_edits(review) if self._apply_edits else []
+
     def skip_if(self) -> bool:
         code, date = self._prov["code"], self._prov["date"]
         _, out_slug = _slugs(self._area, self._osm_area)
-        outputs = [
-            _out(code, date, s, out_slug)
-            for s in ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm", "_changes.osc")
-        ]
+        outputs = [*self._review_files(), _out(code, date, "_changes.osc", out_slug)]
         # existence plus freshness vs the PBF — a re-downloaded/newer PBF
-        # (server date roll, --overwrite pbf) invalidates existing outputs
-        return all(o.exists() for o in outputs) and not _staleness_reason(code, self._area, outputs)
+        # (server date roll, --overwrite pbf) invalidates existing outputs;
+        # JOSM-saved edits must be absorbed, which needs a run
+        return (all(o.exists() for o in outputs) and not _staleness_reason(code, self._area, outputs)
+                and not self._pending_edits())
 
     def dependencies(self) -> list[Task]:
         return [
@@ -1256,8 +1274,16 @@ class ConflateTask(Task):
         p = self._prov
         config = _load_config(p["code"], p.get("region", ""))
         specificity = _load_specificity()
-        _run(p, "conflate" in self._overwrite_steps, self._area, config, specificity,
+        pending = self._pending_edits()
+        if pending:
+            _, out_slug = _slugs(self._area, self._osm_area)
+            n = absorb_edits(pending, _out(p["code"], p["date"], "_resolutions.json", out_slug))
+            print(f"  [edits  ] {p['code']}: absorbed {n} resolutions from "
+                  f"{', '.join(edited_sibling(f).name for f in pending)}")
+        _run(p, "conflate" in self._overwrite_steps or bool(pending), self._area, config, specificity,
              review_identical=self._review_identical, osm_area=self._osm_area)
+        for f in pending:  # absorbed edits live in the resolutions now: hand back a fresh copy
+            shutil.copy2(f, edited_sibling(f))
 
 
 # ---------------------------------------------------------------------------
@@ -1276,6 +1302,10 @@ def _extra_args(parser) -> None:
     parser.add_argument(
         "--review-identical", dest="review_identical", action="store_true",
         help="Keep zero-delta matches (IoU≥identical_iou, no tag changes) in _conflated.osm",
+    )
+    parser.add_argument(
+        "--apply-edits", action=argparse.BooleanOptionalAction, default=True,
+        help="Absorb saved *_new_edited.osm edits into the resolutions before regenerating (default on)",
     )
     josm = parser.add_mutually_exclusive_group()
     josm.add_argument(
@@ -1306,7 +1336,8 @@ def main() -> None:
 
     tasks = [
         ConflateTask(prov, sources_by_code, overwrite_steps, area=args.area,
-                     review_identical=args.review_identical, osm_area=args.osm_area)
+                     review_identical=args.review_identical, osm_area=args.osm_area,
+                     apply_edits=args.apply_edits)
         for prov in args.provinces
     ]
     results = run_dag(tasks, args.max_weight, overwrite_steps)
