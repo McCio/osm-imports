@@ -10,7 +10,7 @@ import pytest
 from shapely import from_wkt
 from shapely.geometry import MultiPolygon, box, mapping
 
-from dbsn.edits import absorb_edits, diff_edited, drop_edited_copies, edited_sibling
+from dbsn.edits import absorb_edits, diff_edited, drop_edited_copies, edited_sibling, unedited_copies
 from utils.writers import write_osm_items
 
 
@@ -33,6 +33,7 @@ def _bldg(ref, geom, **tags):
 
 
 A, B = box(12.0, 45.0, 12.001, 45.001), box(12.01, 45.0, 12.011, 45.001)
+DECISION = "note:conflate:decision"
 
 
 def test_new_feature_removed_from_edited_layer_is_skipped(tmp_path):
@@ -43,7 +44,7 @@ def test_new_feature_removed_from_edited_layer_is_skipped(tmp_path):
     assert diff_edited(original, edited, "new") == {"dbsn:A": {"decision": "skip"}}
 
 
-@pytest.mark.parametrize("extra_tags", [{}, {"keep_osm": "yes"}])
+@pytest.mark.parametrize("extra_tags", [{}, {DECISION: "keep"}])
 def test_new_feature_josm_deleted_primitive_is_skipped(tmp_path, extra_tags):
     original, edited = tmp_path / "VE_new.osm", tmp_path / "VE_new_edited.osm"
     _write(original, [_bldg("A", A), _bldg("B", B)])
@@ -66,30 +67,29 @@ def test_conflated_pair_removed_deletes_osm_mate_and_excludes_dbsn(tmp_path):
     assert diff_edited(original, edited, "conflated") == {"w11": {"decision": "delete", "dbsn_classid": "A"}}
 
 
-@pytest.mark.parametrize("value", ["yes", "true", "1", "maybe"])
-def test_conflated_pair_removed_with_keep_osm_leaves_osm_alone(tmp_path, value):
+@pytest.mark.parametrize("value", ["keep", "kepp"])
+def test_conflated_pair_removed_with_keep_decision_leaves_osm_alone(tmp_path, value):
     original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
     _write(original, [_pair("A", A, "w11"), _pair("B", B, "w22")])
-    _write(edited, [_pair("A", A, "w11", keep_osm=value), _pair("B", B, "w22")])
+    _write(edited, [_pair("A", A, "w11", **{DECISION: value}), _pair("B", B, "w22")])
     _josm_delete(edited, "A")  # tagged, then deleted: the documented encoding
 
     assert diff_edited(original, edited, "conflated") == {"w11": {"decision": "keep_osm", "dbsn_classid": "A"}}
 
 
-@pytest.mark.parametrize("value", ["yes", "true", "1", "maybe"])
-def test_conflated_pair_tagged_keep_osm_leaves_osm_alone_whatever_else_changed(tmp_path, value):
+@pytest.mark.parametrize("value", ["keep", "KEEP", "kepp"])  # an unknown value warns and keeps: the safe direction
+def test_conflated_pair_decided_keep_leaves_osm_alone_whatever_else_changed(tmp_path, value):
     original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
     _write(original, [_pair("A", A, "w11"), _pair("B", B, "w22")])
-    _write(edited, [_pair("A", A, "w11", keep_osm=value, name="X"), _pair("B", B, "w22")])
+    _write(edited, [_pair("A", A, "w11", name="X", **{DECISION: value}), _pair("B", B, "w22")])
 
     assert diff_edited(original, edited, "conflated") == {"w11": {"decision": "keep_osm", "dbsn_classid": "A"}}
 
 
-@pytest.mark.parametrize("value", ["no", "false", "0"])
-def test_conflated_keep_osm_false_is_no_instruction(tmp_path, value):
+def test_conflated_undecided_is_no_instruction(tmp_path):
     original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
     _write(original, [_pair("A", A, "w11")])
-    _write(edited, [_pair("A", A, "w11", keep_osm=value)])
+    _write(edited, [_pair("A", A, "w11", **{DECISION: "undecided"})])
 
     assert diff_edited(original, edited, "conflated") == {}
 
@@ -170,6 +170,267 @@ def test_osm_only_geometry_edit_is_recorded_as_wkt_on_the_osm_id(tmp_path):
     assert entries["w11"]["decision"] == "tag_update"
     assert entries["w11"]["tags"] == {"name": "X"}
     assert from_wkt(entries["w11"]["geometry"]).equals(moved)
+
+
+def _near_dbsn(ref, geom, osm, **tags):
+    """The DBSN member of a near-miss pair in `_ambiguous`."""
+    return geom, {"building": "yes", "ref:dbsn": ref, "note:conflate": f"near_miss,osm={osm}", **tags}
+
+
+def _near_osm(osm_id, geom, ref, **tags):
+    """The OSM member of a near-miss pair in `_ambiguous`."""
+    return geom, {"building": "yes", "osm:id": osm_id, "note:conflate": f"near_miss,dbsn={ref}", **tags}
+
+
+def test_ambiguous_near_miss_osm_member_removed_means_match(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", A, "w11")])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "match", "dbsn_classid": "A"}}
+
+
+def test_ambiguous_shape_match_osm_member_removed_means_match(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    dbsn = (A, {"building": "yes", "ref:dbsn": "A", "note:conflate": "shape_match,osm=w11,suggest=replace"})
+    osm = (B, {"building": "yes", "osm:id": "w11", "note:conflate": "shape_match,dbsn=A,suggest=replace"})
+    _write(original, [dbsn, osm])
+    _write(edited, [dbsn])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "match", "dbsn_classid": "A"}}
+
+
+@pytest.mark.parametrize("on_dbsn", [True, False])
+def test_ambiguous_explicit_match_on_either_member_matches_the_pair(tmp_path, on_dbsn):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    value = {DECISION: "MATCH"}
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", A, "w11", **(value if on_dbsn else {})),
+                    _near_osm("w11", B, "A", **({} if on_dbsn else value))])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "match", "dbsn_classid": "A"}}
+
+
+def _nm(dbsn_ids, osm_ids, **per_id):
+    """An N:M `ambiguous` group; `per_id` maps a feature id to its extra tags."""
+    dbsn = [(A, {"building": "yes", "ref:dbsn": d, "note:conflate": f"ambiguous,osm={','.join(osm_ids)}",
+                 **per_id.get(d, {})}) for d in dbsn_ids]
+    osm = [(B, {"building": "yes", "osm:id": o, "note:conflate": f"ambiguous,dbsn={','.join(dbsn_ids)}",
+                **per_id.get(o, {})}) for o in osm_ids]
+    return dbsn, osm
+
+
+def test_ambiguous_n_to_m_match_pairs_the_one_remaining_mate_and_the_others_are_removed(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [*_nm(["D1", "D2"], ["w1", "w2"])[0], *_nm(["D1", "D2"], ["w1", "w2"])[1]])
+    dbsn, osm = _nm(["D1", "D2"], ["w1", "w2"], D1={DECISION: "match"})
+    _write(edited, [dbsn[0], osm[0]])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "w1": {"decision": "match", "dbsn_classid": "D1"},
+        "w2": {"decision": "delete"},
+        "dbsn:D2": {"decision": "skip"},
+    }
+
+
+def test_ambiguous_n_to_m_match_with_several_mates_left_is_not_absorbed(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    dbsn, osm = _nm(["D1"], ["w1", "w2"])
+    _write(original, [*dbsn, *osm])
+    dbsn, osm = _nm(["D1"], ["w1", "w2"], D1={DECISION: "match"})
+    _write(edited, [*dbsn, *osm])
+
+    assert diff_edited(original, edited, "ambiguous") == {}
+
+
+def test_ambiguous_n_to_m_osm_member_removed_is_deleted_not_matched(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    dbsn, osm = _nm(["D1"], ["w1", "w2"])
+    _write(original, [*dbsn, *osm])
+    _write(edited, [*dbsn, osm[0]])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w2": {"decision": "delete"}}
+
+
+def test_ambiguous_near_miss_match_keeps_the_edit_of_the_dbsn_member(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", A, "w11", name="X")])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "w11": {"decision": "match", "dbsn_classid": "A"},
+        "dbsn:A": {"tags": {"name": "X"}},
+    }
+
+
+@pytest.mark.parametrize("value", ["delete", "drop"])
+def test_ambiguous_near_miss_osm_member_decided_delete_deletes_the_way(tmp_path, value):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A", **{DECISION: value})])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "delete"}}
+
+
+def test_ambiguous_near_miss_both_members_removed_deletes_the_way_and_skips_the_dbsn_feature(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "delete"}, "dbsn:A": {"decision": "skip"}}
+
+
+def test_ambiguous_contained_osm_member_removed_deletes_the_way(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    context, part = _has_part()
+    _write(original, [context, part])
+    _write(edited, [context])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "delete"}}
+
+
+def test_ambiguous_has_part_dbsn_member_removed_is_skipped(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    context = (A, {"building": "yes", "ref:dbsn": "A", "note:conflate": "has_part,osm=w11"})
+    part = (B, {"building": "roof", "osm:id": "w11", "note:conflate": "contained_by,dbsn=A"})
+    _write(original, [context, part])
+    _write(edited, [part])
+
+    assert diff_edited(original, edited, "ambiguous") == {"dbsn:A": {"decision": "skip"}}
+
+
+@pytest.mark.parametrize("value", ["keep", "both"])
+def test_ambiguous_near_miss_decided_keep_on_osm_member_keeps_both(tmp_path, value):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A", **{DECISION: value})])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "keep_osm"}}
+
+
+def test_ambiguous_decided_keep_on_dbsn_member_keeps_every_osm_mate(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    dbsn = {"building": "yes", "ref:dbsn": "A", "note:conflate": "ambiguous,osm=w11,w12"}
+    osm = lambda i, g: (g, {"building": "yes", "osm:id": i, "note:conflate": "ambiguous,dbsn=A"})  # noqa: E731
+    _write(original, [(A, dbsn), osm("w11", B), osm("w12", B)])
+    _write(edited, [(A, {**dbsn, DECISION: "keep"}), osm("w11", B), osm("w12", B)])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "w11": {"decision": "keep_osm"}, "w12": {"decision": "keep_osm"},
+    }
+
+
+def test_ambiguous_near_miss_with_both_geometries_edited_keeps_both_with_the_edits(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    moved_dbsn, moved_osm = box(12.0005, 45.0, 12.0015, 45.001), box(12.02, 45.0, 12.021, 45.001)
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", moved_dbsn, "w11"), _near_osm("w11", moved_osm, "A")])
+
+    entries = diff_edited(original, edited, "ambiguous")
+
+    assert sorted(entries) == ["dbsn:A", "w11"]
+    assert entries["w11"]["decision"] == "tag_update"
+    assert from_wkt(entries["w11"]["geometry"]).equals(moved_osm)
+    assert "decision" not in entries["dbsn:A"]
+    assert from_wkt(entries["dbsn:A"]["geometry"]).equals(moved_dbsn)
+
+
+@pytest.mark.parametrize("edit_dbsn", [True, False])
+def test_ambiguous_near_miss_with_one_member_edited_is_not_absorbed(tmp_path, edit_dbsn):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    moved = box(12.0005, 45.0, 12.0015, 45.001)
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    dbsn_geom, osm_geom = (moved, B) if edit_dbsn else (A, moved)
+    _write(edited, [_near_dbsn("A", dbsn_geom, "w11"), _near_osm("w11", osm_geom, "A")])
+
+    assert diff_edited(original, edited, "ambiguous") == {}
+
+
+def _has_part(decision=None):
+    """DBSN feature A with the OSM roof w11 inside it (the roof optionally decided)."""
+    context = (A, {"building": "yes", "ref:dbsn": "A", "note:conflate": "has_part,osm=w11"})
+    part = (B, {"building": "roof", "osm:id": "w11", "note:conflate": "contained_by,dbsn=A"})
+    return context, (part[0], {**part[1], **({DECISION: decision} if decision else {})})
+
+
+def test_ambiguous_contained_osm_feature_edit_without_a_decision_is_not_absorbed(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    context, (geom, tags) = _has_part()
+    _write(original, [context, (geom, tags)])
+    _write(edited, [context, (geom, {**{k: v for k, v in tags.items() if k != "building"}, "building:part": "yes"})])
+
+    assert diff_edited(original, edited, "ambiguous") == {}
+
+
+def test_ambiguous_make_part_keeps_a_shape_and_tag_edit_of_the_part(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    moved = box(12.0105, 45.0, 12.0115, 45.001)
+    context, part = _has_part()
+    _write(original, [context, part])
+    _write(edited, [context, (moved, {**_has_part("part")[1][1], "name": "Roof"})])
+
+    entries = diff_edited(original, edited, "ambiguous")
+
+    assert list(entries) == ["w11"]
+    assert entries["w11"]["decision"] == "tag_update"
+    assert entries["w11"]["tags"] == {"name": "Roof", "building:part": "roof", "-building": ""}
+    assert from_wkt(entries["w11"]["geometry"]).equals(moved)
+
+
+def test_ambiguous_keep_on_osm_member_keeps_its_tag_edit_and_the_edit_of_its_dbsn_mate(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_dbsn("A", A, "w11", name="D"), _near_osm("w11", B, "A", name="O", **{DECISION: "keep"})])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "w11": {"decision": "tag_update", "tags": {"name": "O"}},
+        "dbsn:A": {"tags": {"name": "D"}},
+    }
+
+
+def test_ambiguous_keep_on_has_part_dbsn_member_keeps_its_edit_and_every_osm_mate(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    context, part = _has_part()
+    _write(original, [context, part])
+    _write(edited, [(context[0], {**context[1], DECISION: "keep", "name": "Main"}), part])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "w11": {"decision": "keep_osm"},
+        "dbsn:A": {"tags": {"name": "Main"}},
+    }
+
+
+def test_ambiguous_osm_edit_is_absorbed_when_its_dbsn_mate_was_removed(tmp_path):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    _write(original, [_near_dbsn("A", A, "w11"), _near_osm("w11", B, "A")])
+    _write(edited, [_near_osm("w11", B, "A", name="X")])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "dbsn:A": {"decision": "skip"},
+        "w11": {"decision": "tag_update", "tags": {"name": "X"}},
+    }
+
+
+@pytest.mark.parametrize("value", ["make_part", "part"])
+def test_ambiguous_contained_feature_decided_make_part_retags_it_as_a_building_part(tmp_path, value):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    context, part = _has_part()
+    _write(original, [context, part])
+    _write(edited, [context, _has_part(value)[1]])
+
+    assert diff_edited(original, edited, "ambiguous") == {
+        "w11": {"decision": "tag_update", "tags": {"building:part": "roof", "-building": ""}},
+    }
+
+
+@pytest.mark.parametrize("value", ["delete", "drop"])
+def test_ambiguous_contained_feature_decided_delete_deletes_the_way(tmp_path, value):
+    original, edited = tmp_path / "VE_ambiguous.osm", tmp_path / "VE_ambiguous_edited.osm"
+    context, part = _has_part()
+    _write(original, [context, part])
+    _write(edited, [context, _has_part(value)[1]])
+
+    assert diff_edited(original, edited, "ambiguous") == {"w11": {"decision": "delete"}}
 
 
 def _osm_only_with_nodes(path, corners, unsafe, **way_tags):
@@ -315,6 +576,22 @@ def test_absorb_ignores_edited_copy_that_was_never_saved_since_regeneration(tmp_
 
     assert absorb_edits([original], resolutions) == 0
     assert not resolutions.exists()
+
+
+def test_unedited_copies_are_the_edited_siblings_not_saved_since_the_original_was_written(tmp_path):
+    saved, unsaved, fresh, no_copy = (tmp_path / f"VE_{n}.osm" for n in ("new", "conflated", "ambiguous", "osm_only"))
+    for path in (saved, unsaved, fresh, no_copy):
+        _write(path, [_bldg("A", A)])
+    for path in (saved, unsaved, fresh):
+        _write(edited_sibling(path), [_bldg("A", A)])
+    stamp = saved.stat().st_mtime_ns
+    os.utime(saved, ns=(stamp, stamp))
+    os.utime(edited_sibling(saved), ns=(stamp + 10**9, stamp + 10**9))  # JOSM saved after the original
+    os.utime(edited_sibling(unsaved), ns=(stamp - 10**9, stamp - 10**9))  # copy of an older original
+    os.utime(fresh, ns=(stamp, stamp))
+    os.utime(edited_sibling(fresh), ns=(stamp, stamp))  # a fresh copy keeps the original's mtime
+
+    assert unedited_copies([saved, unsaved, fresh, no_copy]) == [unsaved]
 
 
 def test_new_feature_untouched_yields_nothing(tmp_path):

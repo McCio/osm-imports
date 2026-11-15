@@ -17,7 +17,7 @@ from dbsn.triage import _is_conflate_meta
 _GEOM_TOLERANCE = 1e-8
 
 # review-file stem suffixes (= diff kinds) that are absorbed; `_ambiguous` follows in a later slice
-_KINDS = ("new", "conflated", "osm_only")
+_KINDS = ("new", "conflated", "osm_only", "ambiguous")
 
 
 def _kind(path: Path) -> str | None:
@@ -25,8 +25,13 @@ def _kind(path: Path) -> str | None:
     return next((k for k in _KINDS if path.stem.endswith(f"_{k}")), None)
 
 
-_KEEP_TRUE = frozenset({"yes", "true", "1"})
-_KEEP_FALSE = frozenset({"no", "false", "0"})
+_DECISION_KEY = "note:conflate:decision"
+_KEEP = frozenset({"keep", "both"})
+_UNDECIDED = frozenset({"", "undecided"})
+_MAKE_PART = frozenset({"make_part", "part"})  # contained OSM feature: building=X becomes building:part=X
+_DROP = frozenset({"delete", "drop"})
+_MATCH = frozenset({"match"})  # interpret the pair as a match: the OSM way is updated in place
+_PAIR_KINDS = ("near_miss", "shape_match")  # 1:1 pairs where removing the OSM member means match
 
 
 @dataclass
@@ -34,7 +39,7 @@ class _Feature:
     tags: dict[str, str]
     geom: object
     note: str = ""  # `note:conflate`: names the OSM mate (`osm=wXXX[,merged=a|b]`) of a `_conflated` pair
-    keep_osm: str | None = None  # the user's `keep_osm` tag, an instruction rather than an OSM tag
+    decision: str | None = None  # the user's `note:conflate:decision` value, an instruction rather than an OSM tag
     deleted: bool = False  # a JOSM `action="delete"` primitive
     vertices: tuple[str, ...] = ()  # `osm:id` (nXXX) of the way's identity nodes: its unsafe OSM nodes
 
@@ -102,10 +107,10 @@ def _read_features(path: Path, key: str = "ref:dbsn") -> dict[str, _Feature]:
         else:
             continue
         out[tags[key]] = _Feature(
-            {k: v for k, v in tags.items() if k not in ("type", "keep_osm") and not _is_conflate_meta(k)},
+            {k: v for k, v in tags.items() if k != "type" and not _is_conflate_meta(k)},
             geom,
             tags.get("note:conflate", ""),
-            tags.get("keep_osm"),
+            tags.get(_DECISION_KEY),
             elem.get("action") == "delete",
             tuple(identity[ref] for nd in elem.iter("nd") if (ref := nd.get("ref")) in identity)
             if elem.tag == "way" else (),
@@ -114,12 +119,12 @@ def _read_features(path: Path, key: str = "ref:dbsn") -> dict[str, _Feature]:
 
 
 def _keeps_osm(ref: str, after: _Feature | None) -> bool:
-    """Did the user tag the pair `keep_osm`? Unknown values warn and count as keep (the safe direction)."""
-    value = after.keep_osm if after else None
-    if value is None or value.lower() in _KEEP_FALSE:
+    """Did the user decide `keep` on the pair? Unknown values warn and count as keep (the safe direction)."""
+    value = (after.decision if after else None) or ""
+    if value.lower() in _UNDECIDED | _MAKE_PART | _DROP | _MATCH:
         return False
-    if value.lower() not in _KEEP_TRUE:
-        print(f"  [warn   ] keep_osm={value!r} on {ref} is not yes/true/1: keeping the OSM feature")
+    if value.lower() not in _KEEP:
+        print(f"  [warn   ] {_DECISION_KEY}={value!r} on {ref} is not keep: keeping the OSM feature")
     return True
 
 
@@ -182,6 +187,17 @@ def pending_edits(review_files: list[Path]) -> list[Path]:
     ]
 
 
+def unedited_copies(review_files: list[Path]) -> list[Path]:
+    """Review files whose `_edited` sibling is older than the file: a copy of a previous run nobody saved since.
+
+    Such a copy holds no edits and is safe to replace (a fresh copy has the file's mtime, so it is not listed).
+    """
+    return [
+        p for p in review_files
+        if edited_sibling(p).exists() and edited_sibling(p).stat().st_mtime_ns < p.stat().st_mtime_ns
+    ]
+
+
 def absorb_edits(review_files: list[Path], resolutions_path: Path) -> int:
     """Merge the edits of each review file's `_edited` sibling into the resolutions file.
 
@@ -201,8 +217,123 @@ def absorb_edits(review_files: list[Path], resolutions_path: Path) -> int:
     return len(found)
 
 
+def _mates(note: str, key: str) -> list[str]:
+    """Ids listed under `key=` in a `note:conflate` value (`ambiguous,osm=w1,w2` → [w1, w2])."""
+    out: list[str] = []
+    listing = False
+    for part in note.split(","):
+        if "=" in part:
+            name, _, value = part.partition("=")
+            listing = name == key
+            if listing:
+                out.append(value)
+        elif listing:
+            out.append(part)
+    return out
+
+
+def _diff_ambiguous(original: Path, edited: Path) -> dict[str, dict]:
+    """Entries for `_ambiguous`: each member is judged on its own.
+
+    A removed DBSN member is skipped, a removed OSM member deleted, except the OSM member of a near-miss or
+    shape-match pair whose DBSN mate stays: that means `match` (also an explicit `note:conflate:decision=match`
+    on either member, with exactly one mate left). A decided member (`keep`/`both`, `make_part`,
+    every mate removed, or no mate at all) always keeps its tag, shape and node edits, whatever the conflict kind;
+    `keep` on either member keeps the OSM way and lets the DBSN feature be imported beside it. An edit on an
+    undecided member is not absorbed, except both members of a pair drawn anew: keep both.
+    """
+    osm_before, osm_after = _read_features(original, "osm:id"), _read_features(edited, "osm:id")
+    dbsn_before, dbsn_after = _read_features(original), _read_features(edited)
+
+    def _dropped(i: str) -> bool:
+        return i in osm_after and (osm_after[i].decision or "").lower() in _DROP
+
+    def _decided(feat: _Feature | None, values: frozenset[str]) -> bool:
+        return feat is not None and (feat.decision or "").lower() in values
+
+    def _osm_mates(ref: str) -> list[str]:
+        return [m for m in _mates(dbsn_before[ref].note, "osm") if m in osm_before]
+
+    removed = {i for i in osm_before if i not in osm_after or osm_after[i].deleted or _dropped(i)}
+    dbsn_left = {d for d, f in dbsn_after.items() if d in dbsn_before and not f.deleted}
+
+    # `match`: the DBSN feature is forced onto the OSM way, which is updated in place
+    matches: dict[str, str] = {}  # osm id → dbsn id
+    for i in removed:  # removing the OSM member of a near-miss / shape-match pair whose DBSN mate stays
+        mates = _mates(osm_before[i].note, "dbsn")
+        if osm_before[i].note.split(",")[0] in _PAIR_KINDS and len(mates) == 1 and not _dropped(i) \
+                and mates[0] in dbsn_left:
+            matches[i] = mates[0]
+    for i, f in osm_after.items():  # the explicit value, on either member: its one remaining mate
+        if i in osm_before and i not in removed and _decided(f, _MATCH):
+            left = [d for d in _mates(osm_before[i].note, "dbsn") if d in dbsn_left]
+            if len(left) == 1:
+                matches[i] = left[0]
+            else:
+                print(f"  [warn   ] {i}: {_DECISION_KEY}=match needs exactly one DBSN mate left; delete the others")
+    for d in dbsn_left:
+        if _decided(dbsn_after[d], _MATCH):
+            left = [o for o in _osm_mates(d) if o not in removed]
+            if len(left) == 1:
+                matches[left[0]] = d
+            else:
+                print(f"  [warn   ] {d}: {_DECISION_KEY}=match needs exactly one OSM mate left; delete the others")
+
+    deleted = {i: {"decision": "delete"} for i in removed if i not in matches}
+    dbsn = diff_edited(original, edited, "new")
+    skips = {k: v for k, v in dbsn.items() if v.get("decision") == "skip"}
+    dbsn_edits = {k: v for k, v in dbsn.items() if "decision" not in v}
+    osm_edits = {i: e for i, e in diff_edited(original, edited, "osm_only").items() if e["decision"] == "tag_update"}
+
+    taken = deleted.keys() | matches.keys()
+    kept = {i for i in osm_before if i not in taken and _keeps_osm(i, osm_after.get(i))}
+    for ref in dbsn_before:
+        if _keeps_osm(ref, dbsn_after.get(ref)):
+            kept.update(m for m in _osm_mates(ref) if m not in taken)
+    kept.update(  # the shapes of both members of a pair drawn anew: keep both
+        i for i, e in osm_edits.items()
+        if "geometry" in e and (mates := _mates(osm_before[i].note, "dbsn"))
+        and all("geometry" in dbsn_edits.get(f"dbsn:{m}", {}) for m in mates)
+    )
+    make_part = {
+        i for i, f in osm_after.items()
+        if i in osm_before and i not in removed and "building" in f.tags and _decided(f, _MAKE_PART)
+    }
+    decided_osm = (kept | make_part | {
+        i for i, f in osm_before.items()
+        if not (mates := _mates(f.note, "dbsn")) or all(f"dbsn:{m}" in skips for m in mates)
+    }) - taken
+    decided_dbsn = {
+        k for k in dbsn_edits
+        if k.removeprefix("dbsn:") in matches.values()
+        or ((mates := _osm_mates(k.removeprefix("dbsn:"))) and (kept.intersection(mates) or set(mates) <= removed))
+    }
+
+    entries: dict[str, dict] = {
+        **skips, **deleted, **{i: {"decision": "match", "dbsn_classid": d} for i, d in matches.items()},
+    }
+    for i in decided_osm:
+        edit = dict(osm_edits.get(i, {}))
+        if i in make_part:  # building=X becomes building:part=X on top of the user's own tags
+            edit = {**edit, "decision": "tag_update",
+                    "tags": {**edit.get("tags", {}), "building:part": osm_after[i].tags["building"], "-building": ""}}
+        if edit:
+            entries[i] = edit
+        elif i in kept:
+            entries[i] = {"decision": "keep_osm"}
+    entries.update({k: v for k, v in dbsn_edits.items() if k in decided_dbsn})
+    for i in osm_edits.keys() & matches.keys():
+        print(f"  [warn   ] {i}: edit of an OSM member being matched is not absorbed; edit the DBSN member instead")
+    settled = decided_osm | taken
+    for ref in [*(k for k in dbsn_edits if k not in decided_dbsn), *(i for i in osm_edits if i not in settled)]:
+        print(f"  [warn   ] {ref}: edit of an undecided member is not absorbed; set {_DECISION_KEY} or delete a mate")
+    return entries
+
+
 def diff_edited(original: Path, edited: Path, kind: str) -> dict[str, dict]:
     """Resolution entries (`dbsn:<classid>` → entry) for what the user changed in `edited`."""
+    if kind == "ambiguous":
+        return _diff_ambiguous(original, edited)
     key = "osm:id" if kind == "osm_only" else "ref:dbsn"
     before, after = _read_features(original, key), _read_features(edited, key)
     nodes_before = _identity_nodes(original) if kind == "osm_only" else {}

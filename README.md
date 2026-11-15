@@ -146,11 +146,11 @@ Useful flags:
 | Flag | Effect |
 |---|---|
 | `--osm-area NAME\|r/ID\|w/ID` | Further clip to an OSM-side area — an admin relation or named area (relation or closed way) read from the province PBF, by name (`Isola dei Petroli`) or id (`r/6628636`, `w/107637324`). Intersected with `--area` when both given; outputs get an `_osm-` slug so they never shadow unslugged runs. Match is exact + case-insensitive; needs the PBF already downloaded. |
-| `--josm [HOST:PORT]` | After conflation, open the PBF (reference layer) plus the `ambiguous`, `new`, `osm-only` and `conflated` review files in JOSM via remote control (default `localhost:8111`). Enable remote control in JOSM preferences first. Without `--josm` or `--no-josm`, this happens automatically when JOSM answers on the default host, only for provinces conflated in this run (an explicit `--josm` opens every selected province). Review files without data are not opened (JOSM rejects an empty layer). Each other review file opens as an editable copy `<file>_edited.osm` (created once, never overwritten; a warning appears when it is older than the regenerated original, delete it for a fresh copy), bound to its file so Cmd+S saves in place; upload stays disabled (`upload="never"`). Each run adds fresh layers — close stale ones manually (JOSM has no delete-layer remote call). |
+| `--josm [HOST:PORT]` | After conflation, open the PBF (reference layer) plus the `ambiguous`, `new`, `osm-only` and `conflated` review files in JOSM via remote control (default `localhost:8111`). Enable remote control in JOSM preferences first. Without `--josm` or `--no-josm`, this happens automatically when JOSM answers on the default host, only for provinces conflated in this run (an explicit `--josm` opens every selected province). Review files without data are not opened (JOSM rejects an empty layer). Each other review file opens as an editable copy `<file>_edited.osm` (a copy with saved edits is never overwritten; a copy nobody saved is replaced with a fresh one after each conflation run), bound to its file so Cmd+S saves in place; upload stays disabled (`upload="never"`). Each run adds fresh layers — close stale ones manually (JOSM has no delete-layer remote call). |
 | `--no-josm` | Never open layers in JOSM, even when it is running. |
 | `--overwrite conflate` / `--overwrite pbf` | Re-run match logic on cached PBF / re-download the PBF |
 | `--review-identical` | Keep zero-delta matches (IoU≥`identical_iou`, no tag changes) in `_conflated.osm` |
-| `--apply-edits` / `--no-apply-edits` | Default on. Before regenerating, absorb edits saved in `<file>_edited.osm` into `_resolutions.json` (`_new` and `_conflated` for now), then replace the `_edited` copy with a fresh one. Unsaved JOSM edits are not on disk and cannot be absorbed. `--overwrite conflate` (or bare `--overwrite`) starts from scratch instead: every `_edited` copy is deleted without absorbing, saved edits included, and `--josm` then opens fresh copies. |
+| `--apply-edits` / `--no-apply-edits` | Default on. Before regenerating, absorb edits saved in `<file>_edited.osm` into `_resolutions.json` (`_new` and `_conflated` for now), then replace the `_edited` copy with a fresh one (every `_edited` copy without saved edits is refreshed after each run). Unsaved JOSM edits are not on disk and cannot be absorbed. `--overwrite conflate` (or bare `--overwrite`) starts from scratch instead: every `_edited` copy is deleted without absorbing, saved edits included, and `--josm` then opens fresh copies. |
 
 #### Output files
 
@@ -190,6 +190,30 @@ Shared-node cases also carry:
 
 On save, decisions are written to `_resolutions.json` and conflation re-runs automatically.
 
+**Or edit `_ambiguous_edited.osm` in JOSM** (`--josm` opens it) and save; the next `dbsn-conflate` run absorbs it. Each member is judged on its own:
+
+- delete a DBSN member: the DBSN feature is not imported (its OSM mate stays, and falls back to `_osm_only.osm`);
+- delete the OSM member of a `near_miss` or `shape_match` pair (DBSN member kept): the pair is interpreted as a match, the OSM way is updated in place with the merged tags and the DBSN shape (edits of the DBSN member are applied on top; edits of the OSM member are not absorbed; to really delete the way, set `note:conflate:decision=delete` on it instead);
+- delete any other OSM member (`ambiguous` N:M, `contained_by`, ...): the way is deleted, its DBSN mate is matched again (usually imported as new);
+- set `note:conflate:decision=match` on either member of any pair to get the same match explicitly. It needs exactly one mate left: in an N:M group, delete the other OSM members (deleted) and the other DBSN members (skipped), then set `match` on the pair you keep;
+- set `note:conflate:decision` on a member (every decidable member is written with `undecided`; matching is case-insensitive). The values depend on the kind in `note:conflate`:
+
+| Kind | Value | Effect |
+|---|---|---|
+| `near_miss`, `shape_match`, `ambiguous` | `keep` or `both` (set on either member) | OSM way untouched, DBSN feature imported beside it |
+| `contained_by` (OSM feature inside a DBSN building) | `keep` | OSM way untouched |
+| | `make_part` or `part` | `building=X` becomes `building:part=X` |
+| | `delete` or `drop` | way deleted |
+| `has_part` (matched DBSN feature with OSM features inside it) | `keep` or `both` (set on the DBSN feature or on its former OSM mate) | OSM ways untouched, DBSN feature imported beside them |
+| `legacy_import`, `suggest=delete` | `keep` | the suggested delete is withdrawn |
+
+A `has_part` group (the DBSN feature, its former OSM mate, the contained OSM features) is not conflated: nothing of it is in `_changes.osc` until you decide. Delete the DBSN feature to leave the OSM ways alone, or decide each member as above.
+
+A decided member always keeps its own edits, whatever the kind (`geometry` WKT, `-key` tag deletions and per-node `note:conflate:unsafe` decisions are recorded in `_resolutions.json`, as in `_osm_only.osm`). A member counts as decided when it carries `keep`/`both`/`make_part`/`part`, when every mate was deleted, or when it has no mate (`geometry_unsafe`, `legacy_import`). So `part` plus a drawn shape keeps the new shape.
+
+- draw the shape of **both** members of a near-miss or shape-match pair anew: that means keep both, each with its own edit;
+- an edit of an undecided member is **not** absorbed (a warning says so): set a decision or delete a mate.
+
 #### Reviewing `_new.osm` in JOSM
 
 New features are auto-created on upload. To suppress a new building (e.g. it was demolished and OSM is already correct), record `skip` interactively in `dbsn-triage` — look it up via `dbsn:<classid>` or batch-paste `ref:dbsn=…` values straight from JOSM. On the next conflation run, skipped DBSN IDs are excluded from `_new.osm`.
@@ -206,7 +230,7 @@ Each pair is one feature: DBSN shape, merged tags, `ref:dbsn`, and the OSM mate 
 
 - a pair whose tags or shape you change gets your tags and shape on the OSM way's modify (`-key` deletions and `geometry` WKT recorded in `_resolutions.json` under `dbsn:<classid>`); a tag you set resolves a `note:conflate:<key>` conflict on that key;
 - a pair you delete deletes its OSM way and the DBSN feature is not imported;
-- to leave OSM alone instead, tag the pair `keep_osm=yes` (or `true`/`1`) and leave it in the layer: OSM is untouched, the DBSN feature is not imported, and any other edit of that pair is ignored (any other value except `no`/`false`/`0` warns and counts as keep). Do not delete it: JOSM drops deleted pairs from the saved file, tag included, so it reads as a plain removal;
+- to leave OSM alone instead, set `note:conflate:decision=keep` on the pair and leave it in the layer: OSM is untouched, the DBSN feature is not imported, and any other edit of that pair is ignored (`undecided` is no instruction; any other value warns and counts as keep). Do not delete it: JOSM drops deleted pairs from the saved file, tag included, so it reads as a plain removal;
 - a pair merged from several DBSN features (`merged=a|b` in the note) is handled as a whole: none of its DBSN features reappear in `_new.osm`.
 
 #### Reviewing `_osm_only.osm`

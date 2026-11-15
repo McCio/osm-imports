@@ -41,7 +41,7 @@ from dbsn.common import (
 from dbsn.convert import ConvertTask
 from dbsn.download_pbf import DownloadPbfTask, find_pbf
 from dbsn.download_pbf import _normalize as _pbf_normalize
-from dbsn.edits import absorb_edits, drop_edited_copies, edited_sibling, pending_edits
+from dbsn.edits import absorb_edits, drop_edited_copies, edited_sibling, pending_edits, unedited_copies
 from dbsn.legacy_imports import (
     compile_patterns,
     fetch_changeset_meta,
@@ -650,6 +650,59 @@ def _with_osm_source(tags: dict, osm_tags: dict) -> dict:
     return out
 
 
+_DECIDABLE_AMBIGUOUS = frozenset({"near_miss", "shape_match", "ambiguous", "contained_by", "has_part"})
+
+
+def forced_matches(resolutions: dict[str, dict], dbsn_ids: set[str], osm_ids: set[str]) -> list[tuple[str, str]]:
+    """`(dbsn_id, osm_id)` of every `match` resolution (the user removed the OSM member of a near miss) whose two
+    features still exist; both were kept out of the matching, so the pair is added to its result."""
+    return [
+        (res["dbsn_classid"], osm_id) for osm_id, res in resolutions.items()
+        if res.get("decision") == "match" and res.get("dbsn_classid") in dbsn_ids and osm_id in osm_ids
+    ]
+
+
+def resolve_has_part(
+    matched: list[tuple[str, str]],
+    candidates: list[tuple[str, Any]],
+    dbsn_geoms: dict[str, Any],
+    threshold: float,
+) -> tuple[list[tuple[str, str]], dict[str, tuple[str, list[str]]]]:
+    """Split the 1:1 `matched` pairs: a DBSN feature that contains unmatched OSM `candidates` (`(osm_id, geom)`,
+    at least `threshold` of the candidate's area inside) is ambiguity, not a pair.
+
+    Returns the pairs left clear and `{dbsn_id: (mate osm_id, [contained osm ids])}` for the others.
+    """
+    if not matched:
+        return [], {}
+    tree = STRtree([dbsn_geoms[d] for d, _ in matched])
+    contained: dict[int, list[str]] = {}
+    for osm_id, geom in candidates:
+        if geom.area <= 0:
+            continue
+        for i in tree.query(geom):
+            if geom.intersection(dbsn_geoms[matched[i][0]]).area / geom.area >= threshold:
+                contained.setdefault(int(i), []).append(osm_id)
+                break
+    clear = [pair for i, pair in enumerate(matched) if i not in contained]
+    return clear, {matched[i][0]: (matched[i][1], ids) for i, ids in contained.items()}
+
+
+def is_decidable(tags: dict, suffix: str) -> bool:
+    """Does a review feature carry a `note:conflate:decision` the user can set? (values: README, `dbsn.edits`)
+
+    `_conflated` pairs, the members of `_ambiguous` conflicts and contained OSM features (the `has_part` DBSN
+    member included), and a suggested legacy delete.
+    """
+    note = tags.get("note:conflate", "")
+    kind = note.split(",")[0]
+    if suffix == "_conflated.osm":
+        return kind.startswith("osm=")
+    return suffix == "_ambiguous.osm" and (
+        kind in _DECIDABLE_AMBIGUOUS or (kind == "legacy_import" and "suggest=delete" in note)
+    )
+
+
 def apply_new_resolution(tags: dict, geom, res: dict) -> tuple[dict, Any]:
     """Apply a `dbsn:<id>` resolution (tag overrides, geometry WKT) to a feature about to be created."""
     if res.get("tags"):
@@ -685,12 +738,12 @@ def _review_summary(resolutions: dict[str, dict]) -> str:
     """`3 skipped, 15 reshaped`: what the resolutions did, zero counts left out."""
     def kind(res: dict) -> str | None:
         decision = res.get("decision")
-        if decision in ("skip", "delete", "keep_osm"):
-            return {"skip": "skipped", "delete": "deleted", "keep_osm": "kept OSM"}[decision]
+        if decision in ("skip", "delete", "keep_osm", "match"):
+            return {"skip": "skipped", "delete": "deleted", "keep_osm": "kept OSM", "match": "matched"}[decision]
         return "reshaped" if res.get("geometry") or res.get("tags") else None
 
     counts = Counter(filter(None, map(kind, resolutions.values())))
-    labels = ("skipped", "reshaped", "deleted", "kept OSM")
+    labels = ("skipped", "reshaped", "deleted", "kept OSM", "matched")
     return ", ".join(f"{counts[label]} {label}" for label in labels if counts[label])
 
 
@@ -971,6 +1024,19 @@ def _run(
 
     # Fast geometry lookup (avoids O(n) next() per matched feature)
     dbsn_geom_by_id = {fid: geom for fid, _, geom in dbsn_features}
+    result.matched = [*result.matched, *forced_matches(resolutions, set(dbsn_geom_by_id), set(osm_by_id))]
+
+    # A matched DBSN feature with contained OSM parts is ambiguity: the group (DBSN, its mate, the parts) goes to
+    # `_ambiguous` and nothing of it reaches the .osc until the user decides
+    containment_threshold = config.get("containment_threshold", 0.8)
+    result.matched, has_part_groups = resolve_has_part(
+        result.matched,
+        [*((oid, osm_by_id[oid][1]) for oid in result.osm_only),
+         *((fid, g) for fid, _, g, _ in part_features_raw if fid not in resolved_osm_ids)],
+        dbsn_geom_by_id,
+        containment_threshold,
+    )
+    part_of = {oid: did for did, (_, ids) in has_part_groups.items() for oid in ids}
 
     # Detect N:1 merges: DBSN features in dbsn_only that are adjacent to a matched
     # DBSN feature whose OSM counterpart has a multi-unit building tag.
@@ -1128,25 +1194,11 @@ def _run(
     if result.shape_matched:
         print(f"  [shape  ] {code}: {len(result.shape_matched)} shape-signature pairs → ambiguous")
 
-    # Unmatched OSM → osm_only (N:1 containment check: OSM feature inside a matched DBSN)
-    containment_threshold = config.get("containment_threshold", 0.8)
-    _matched_dbsn_ids = [did for did, _ in result.matched]
-    _matched_dbsn_geoms = [dbsn_geom_by_id[did] for did in _matched_dbsn_ids]
-    _matched_dbsn_tree = STRtree(_matched_dbsn_geoms) if _matched_dbsn_ids else None
+    # Unmatched OSM → osm_only (an OSM feature inside a matched DBSN is part of a has_part group)
     n_contained = 0
     for osm_id in result.osm_only:
         osm_tags, osm_geom, _ = osm_by_id[osm_id]
-        contained_by = None
-        if _matched_dbsn_tree is not None and osm_geom.area > 0:
-            for hi in _matched_dbsn_tree.query(osm_geom):
-                inter = osm_geom.intersection(_matched_dbsn_geoms[hi]).area
-                if inter / osm_geom.area >= containment_threshold:
-                    contained_by = _matched_dbsn_ids[hi]
-                    break
-        if contained_by:
-            dbsn_tags = dbsn_tags_by_id[contained_by]
-            ambiguous.append(({**dbsn_tags, "ref:dbsn": contained_by,
-                               "note:conflate": f"has_part,osm={osm_id}"}, dbsn_geom_by_id[contained_by]))
+        if contained_by := part_of.get(osm_id):
             ambiguous.append(({**osm_tags, "osm:id": osm_id,
                                "note:conflate": f"contained_by,dbsn={contained_by}"}, osm_geom))
             n_contained += 1
@@ -1162,7 +1214,13 @@ def _run(
         _all_dbsn_tree = STRtree(_all_dbsn_geoms)
         n_parts_contained = 0
         for fid, tags, geom, _ver in part_features_raw:
-            contained_by = None
+            if fid in resolved_osm_ids:
+                continue
+            contained_by = part_of.get(fid)
+            if contained_by:
+                ambiguous.append(({**tags, "osm:id": fid, "note:conflate": f"contained_by,dbsn={contained_by}"}, geom))
+                n_parts_contained += 1
+                continue
             if geom.area > 0:
                 for hi in _all_dbsn_tree.query(geom):
                     inter = geom.intersection(_all_dbsn_geoms[hi]).area
@@ -1180,6 +1238,15 @@ def _run(
                 osm_only.append(({**tags, "osm:id": fid}, geom))
         if n_parts_contained:
             print(f"  [conflate] {code}: {n_parts_contained} building:part features inside DBSN → ambiguous")
+
+    # has_part groups: the DBSN feature and its former mate, beside the contained parts emitted above
+    for dbsn_id, (mate, part_ids) in has_part_groups.items():
+        mate_tags, mate_geom, _ = osm_by_id[mate]
+        ambiguous.append(({**dbsn_tags_by_id[dbsn_id], "ref:dbsn": dbsn_id,
+                           "note:conflate": f"has_part,osm={','.join([mate, *part_ids])}"}, dbsn_geom_by_id[dbsn_id]))
+        ambiguous.append(({**mate_tags, "osm:id": mate, "note:conflate": f"ambiguous,dbsn={dbsn_id}"}, mate_geom))
+    if has_part_groups:
+        print(f"  [conflate] {code}: {len(has_part_groups)} matched DBSN features with contained OSM parts → ambiguous")
 
     # Legacy-import detection (changeset-source regex per region/province/area)
     _legacy = compile_patterns(layered_patterns(config, code, p.get("region", ""), area_slug))
@@ -1360,13 +1427,16 @@ def _run(
             [tags.get("osm:id", "") for tags, _ in bucket], way_nodes, node_coords, tagged_nodes, node_to_ways,
             way_tags,
         ) if show_unsafe_nodes else ()
-        return write_osm_items(_items(bucket), _out(code, date, suffix, out_slug), upload="never",
-                               identity_nodes=identity)
+        items = (
+            (geom, {**tags, "note:conflate:decision": "undecided"} if is_decidable(tags, suffix) else tags)
+            for geom, tags in _items(bucket)
+        )
+        return write_osm_items(items, _out(code, date, suffix, out_slug), upload="never", identity_nodes=identity)
 
     n_new = _write_review(new_features, "_new.osm")
     n_osm_only = _write_review(osm_only, "_osm_only.osm", show_unsafe_nodes=True)
     n_conflated = _write_review(conflated, "_conflated.osm")
-    n_ambiguous = _write_review(ambiguous, "_ambiguous.osm")
+    n_ambiguous = _write_review(ambiguous, "_ambiguous.osm", show_unsafe_nodes=True)
     osc_all_creates = [*new_features, *osc_replace_creates]
     _osc_write(
         _out(code, date, "_changes.osc", out_slug),
@@ -1444,9 +1514,9 @@ class ConflateTask(Task):
         outputs = [*self._review_files(), _out(code, date, "_changes.osc", out_slug)]
         # existence plus freshness vs the PBF — a re-downloaded/newer PBF
         # (server date roll, --overwrite pbf) invalidates existing outputs;
-        # JOSM-saved edits must be absorbed, which needs a run
+        # JOSM-saved edits must be absorbed, and an unsaved `_edited` copy of an older run refreshed: both need a run
         return (all(o.exists() for o in outputs) and not _staleness_reason(code, self._area, outputs)
-                and not self._pending_edits())
+                and not self._pending_edits() and not unedited_copies(self._review_files()))
 
     def dependencies(self) -> list[Task]:
         return [
@@ -1473,10 +1543,13 @@ class ConflateTask(Task):
             n = absorb_edits(pending, _out(p["code"], p["date"], "_resolutions.json", out_slug))
             print(f"  [edits  ] {p['code']}: absorbed {n} resolutions from "
                   f"{', '.join(edited_sibling(f).name for f in pending)}")
+        # an `_edited` copy nobody saved holds no edits: refresh it, or JOSM keeps showing the previous run
+        stale = unedited_copies([f for f in self._review_files() if f.exists()])
         _run(p, "conflate" in self._overwrite_steps or bool(pending), self._area, config, specificity,
              review_identical=self._review_identical, osm_area=self._osm_area)
-        for f in pending:  # absorbed edits live in the resolutions now: hand back a fresh copy
-            shutil.copy2(f, edited_sibling(f))
+        for f in (*pending, *stale):  # absorbed edits live in the resolutions now: hand back a fresh copy
+            if f.exists():
+                shutil.copy2(f, edited_sibling(f))
 
 
 # ---------------------------------------------------------------------------

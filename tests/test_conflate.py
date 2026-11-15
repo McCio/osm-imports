@@ -22,11 +22,52 @@ from dbsn.conflate import (
     josm_load_urls,
     josm_open_file_url,
     josm_target_provinces,
+    forced_matches,
+    resolve_has_part,
     resolve_josm_host,
 )
 from dbsn.match import match_features
 from dbsn.tag_merge import merge_tags
 from utils.dag import Result
+
+# ---------------------------------------------------------------------------
+# has_part groups (a matched DBSN feature with contained OSM parts is ambiguity)
+# ---------------------------------------------------------------------------
+
+def test_resolve_has_part_takes_a_dbsn_with_a_contained_osm_part_out_of_the_pairs():
+    dbsn_geoms = {"A": box(0, 0, 10, 10), "B": box(20, 0, 30, 10)}
+    candidates = [("w2", box(1, 1, 3, 3)), ("w3", box(21, 1, 23, 3)), ("w4", box(9, 1, 13, 3))]
+
+    clear, groups = resolve_has_part([("A", "w1"), ("B", "w9")], candidates, dbsn_geoms, 0.8)
+
+    assert clear == []
+    assert groups == {"A": ("w1", ["w2"]), "B": ("w9", ["w3"])}  # w4 sticks out: not contained
+
+
+def test_forced_matches_are_the_match_decisions_whose_two_features_exist():
+    resolutions = {
+        "w1": {"decision": "match", "dbsn_classid": "A"},
+        "w2": {"decision": "match", "dbsn_classid": "gone"},
+        "w3": {"decision": "delete", "dbsn_classid": "B"},
+        "dbsn:C": {"decision": "skip"},
+    }
+
+    assert forced_matches(resolutions, {"A", "B", "C"}, {"w1", "w2", "w3"}) == [("A", "w1")]
+
+
+def test_changeset_text_counts_matches_decided_in_review():
+    text = conflate.changeset_text(0, 1, 0, [], {"w1": {"decision": "match", "dbsn_classid": "A"}})
+
+    assert "1 matched" in text
+
+
+def test_resolve_has_part_leaves_pairs_without_a_contained_part_alone():
+    dbsn_geoms = {"A": box(0, 0, 10, 10)}
+
+    clear, groups = resolve_has_part([("A", "w1")], [("w2", box(50, 50, 52, 52))], dbsn_geoms, 0.8)
+
+    assert clear == [("A", "w1")]
+    assert groups == {}
 
 
 # ---------------------------------------------------------------------------
