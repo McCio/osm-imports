@@ -17,13 +17,20 @@ from dbsn.triage import _is_conflate_meta
 _GEOM_TOLERANCE = 1e-8
 
 # review-file stem suffix → diff kind; the other review files follow in later slices
-_KINDS = {"new": "new"}
+_KINDS = {"new": "new", "conflated": "conflated"}
+
+
+_KEEP_TRUE = frozenset({"yes", "true", "1"})
+_KEEP_FALSE = frozenset({"no", "false", "0"})
 
 
 @dataclass
 class _Feature:
     tags: dict[str, str]
     geom: object
+    note: str = ""  # `note:conflate`: names the OSM mate (`osm=wXXX[,merged=a|b]`) of a `_conflated` pair
+    keep_osm: str | None = None  # the user's `keep_osm` tag, an instruction rather than an OSM tag
+    deleted: bool = False  # a JOSM `action="delete"` primitive
 
 
 def _read_features(path: Path) -> dict[str, _Feature]:
@@ -37,8 +44,8 @@ def _read_features(path: Path) -> dict[str, _Feature]:
     out: dict[str, _Feature] = {}
     for elem in root:
         tags = {t.get("k"): t.get("v") for t in elem.iter("tag")}
-        if "ref:dbsn" not in tags or elem.get("action") == "delete":
-            continue  # a JOSM-deleted primitive reads as removed
+        if "ref:dbsn" not in tags:
+            continue
         if elem.tag == "way":
             geom = rings[elem.get("id")]
         elif elem.tag == "relation":
@@ -49,9 +56,38 @@ def _read_features(path: Path) -> dict[str, _Feature]:
         else:
             continue
         out[tags["ref:dbsn"]] = _Feature(
-            {k: v for k, v in tags.items() if k != "type" and not _is_conflate_meta(k)}, geom
+            {k: v for k, v in tags.items() if k not in ("type", "keep_osm") and not _is_conflate_meta(k)},
+            geom,
+            tags.get("note:conflate", ""),
+            tags.get("keep_osm"),
+            elem.get("action") == "delete",
         )
     return out
+
+
+def _keeps_osm(ref: str, after: _Feature | None) -> bool:
+    """Did the user tag the pair `keep_osm`? Unknown values warn and count as keep (the safe direction)."""
+    value = after.keep_osm if after else None
+    if value is None or value.lower() in _KEEP_FALSE:
+        return False
+    if value.lower() not in _KEEP_TRUE:
+        print(f"  [warn   ] keep_osm={value!r} on {ref} is not yes/true/1: keeping the OSM feature")
+    return True
+
+
+def _pair_decision(ref: str, feat: _Feature, keep: bool) -> dict[str, dict]:
+    """Entries for a `_conflated` pair the user removed (delete its OSM mate) or tagged `keep_osm` (leave it).
+
+    Either way the DBSN feature (and every one merged into the pair) stays out of `_new`.
+    """
+    fields = dict(part.split("=", 1) for part in feat.note.split(",") if "=" in part)
+    decision = "keep_osm" if keep else "delete"
+    entries = {f"dbsn:{extra}": {"decision": "skip"} for extra in fields.get("merged", "").split("|") if extra}
+    if "osm" in fields:
+        entries[fields["osm"]] = {"decision": decision, "dbsn_classid": ref}
+    else:
+        entries[f"dbsn:{ref}"] = {"decision": "skip"}
+    return entries
 
 
 def _tag_overrides(before: dict[str, str], after: dict[str, str]) -> dict[str, str]:
@@ -75,6 +111,14 @@ def _merge_entry(existing: dict, new: dict) -> dict:
 def edited_sibling(path: Path) -> Path:
     """`X_conflated.osm` -> `X_conflated_edited.osm`, the copy the user edits in JOSM."""
     return path.with_name(f"{path.stem}_edited{path.suffix}")
+
+
+def drop_edited_copies(review_files: list[Path]) -> list[Path]:
+    """Delete the `_edited` sibling of each review file; returns the ones that existed."""
+    dropped = [e for e in map(edited_sibling, review_files) if e.exists()]
+    for e in dropped:
+        e.unlink()
+    return dropped
 
 
 def pending_edits(review_files: list[Path]) -> list[Path]:
@@ -114,7 +158,12 @@ def diff_edited(original: Path, edited: Path, kind: str) -> dict[str, dict]:
     before, after = _read_features(original), _read_features(edited)
     entries: dict[str, dict] = {}
     for ref, feat in before.items():
-        if ref not in after:
+        gone = ref not in after or after[ref].deleted
+        keep = kind == "conflated" and _keeps_osm(ref, after.get(ref))
+        if kind == "conflated" and (gone or keep):
+            entries.update(_pair_decision(ref, feat, keep))
+            continue
+        if gone:
             entries[f"dbsn:{ref}"] = {"decision": "skip"}
             continue
         entry: dict = {}

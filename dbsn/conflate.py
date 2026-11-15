@@ -9,6 +9,7 @@ import subprocess
 import sys
 import urllib.request
 import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,7 +41,7 @@ from dbsn.common import (
 from dbsn.convert import ConvertTask
 from dbsn.download_pbf import DownloadPbfTask, find_pbf
 from dbsn.download_pbf import _normalize as _pbf_normalize
-from dbsn.edits import absorb_edits, edited_sibling, pending_edits
+from dbsn.edits import absorb_edits, drop_edited_copies, edited_sibling, pending_edits
 from dbsn.legacy_imports import (
     compile_patterns,
     fetch_changeset_meta,
@@ -532,13 +533,24 @@ def _update_geometry_osc(
 # osmChange writing
 # ---------------------------------------------------------------------------
 
-_OSC_STRIP = frozenset({"osm:id", "ref:dbsn", "source", "note:conflate", "note:conflate:geometry",
+_OSC_STRIP = frozenset({"osm:id", "ref:dbsn", "note:conflate", "note:conflate:geometry",
                         "note:conflate:shared_node_ids"})
 
 
-def _osc_tags(tags: dict) -> dict:
+def _osc_tags(tags: dict, keep_source: bool = False) -> dict:
+    """Tags for the osmChange. `source` stays only where the OSM geometry is kept; geometry that
+    comes from DBSN (created, or edited by hand) carries none: the changeset names the source."""
     return {k: v for k, v in tags.items()
-            if k not in _OSC_STRIP and not k.startswith("note:conflate:") and not k.startswith("-")}
+            if k not in _OSC_STRIP and (keep_source or k != "source")
+            and not k.startswith("note:conflate:") and not k.startswith("-")}
+
+
+def _with_osm_source(tags: dict, osm_tags: dict) -> dict:
+    """`tags` with `source` exactly as OSM has it (merging never edits it where OSM geometry is kept)."""
+    out = {k: v for k, v in tags.items() if k != "source"}
+    if "source" in osm_tags:
+        out["source"] = osm_tags["source"]
+    return out
 
 
 def apply_new_resolution(tags: dict, geom, res: dict) -> tuple[dict, Any]:
@@ -572,6 +584,36 @@ def _way_nd_refs(osm_id: str, way_nodes: dict[int, list[int]]) -> list[int] | No
     return refs[:-1] if refs[-1] == refs[0] else refs
 
 
+def _review_summary(resolutions: dict[str, dict]) -> str:
+    """`3 skipped, 15 reshaped`: what the resolutions did, zero counts left out."""
+    def kind(res: dict) -> str | None:
+        decision = res.get("decision")
+        if decision in ("skip", "delete", "keep_osm"):
+            return {"skip": "skipped", "delete": "deleted", "keep_osm": "kept OSM"}[decision]
+        return "reshaped" if res.get("geometry") or res.get("tags") else None
+
+    counts = Counter(filter(None, map(kind, resolutions.values())))
+    labels = ("skipped", "reshaped", "deleted", "kept OSM")
+    return ", ".join(f"{counts[label]} {label}" for label in labels if counts[label])
+
+
+def changeset_text(n_create: int, n_modify: int, n_delete: int, sources: list[str],
+                   resolutions: dict[str, dict], region: str = "") -> str:
+    """Ready-to-paste changeset tags: a comment computed from the counts (`Reviewed import:` first, and
+    what the resolutions did in brackets, when any exist) and the DBSN `source` values, `;`-joined, first
+    seen first. The bare `Regione` is named after the province's region."""
+    counts = (("added", n_create), ("updated", n_modify), ("deleted", n_delete))
+    comment = ", ".join(f"{verb} {n} feature{'s' * (n != 1)}" for verb, n in counts if n)
+    if resolutions:
+        summary = _review_summary(resolutions)
+        comment = f"Reviewed import: {comment}" + (f" ({summary})" if summary else "")
+    else:
+        comment = comment.capitalize()
+    parts = (s for value in sources for s in value.split(";") if s)
+    source = ";".join(dict.fromkeys(f"Regione {region}" if region and s == "Regione" else s for s in parts))
+    return f"comment={comment}\n" + (f"source={source}\n" if source else "")
+
+
 def _osc_write(
     path: Path,
     way_creates: list[tuple[dict, Any]],         # (tags, geom) — new building features
@@ -582,6 +624,7 @@ def _osc_write(
     node_deletes: list[tuple[int, int]] = (),     # (node_id, version) — isolated removed nodes
     geom_way_modifies: list[tuple[str, int, list[int], dict]] = (),  # (osm_id, ver, nd_refs, tags)
     next_node_id: list[int] | None = None,        # counter for new building-create node IDs
+    way_nodes: dict[int, list[int]] | None = None,  # way_id → refs, so tag-only way modifies keep their nodes
 ) -> None:
     if next_node_id is None:
         next_node_id = [-1]
@@ -647,7 +690,10 @@ def _osc_write(
             el = ET.SubElement(modify_el, osm_type, attrib={
                 "id": osm_id[1:], "version": str(version), "action": "modify",
             })
-            for k, v in _osc_tags(tags).items():
+            if nd_refs := _way_nd_refs(osm_id, way_nodes or {}):
+                for ref in [*nd_refs, nd_refs[0]]:  # close ring
+                    ET.SubElement(el, "nd", attrib={"ref": str(ref)})
+            for k, v in _osc_tags(tags, keep_source=True).items():
                 ET.SubElement(el, "tag", attrib={"k": k, "v": str(v)})
 
     # --- delete ---
@@ -872,6 +918,7 @@ def _run(
     osc_node_modifies: list[tuple[int, int, float, float]] = []  # (node_id, ver, lon, lat)
     osc_node_deletes: list[tuple[int, int]] = []             # (node_id, ver)
     osc_geom_modifies: list[tuple[str, int, list[int], dict]] = []  # (osm_id, ver, nd_refs, tags)
+    geometry_sources: list[str] = []  # DBSN `source` of every way whose geometry is modified in place
     next_node_id = [-1]  # shared counter; geometry updates decrement first
     n_identical = 0  # zero-delta matches dropped from review
 
@@ -901,9 +948,14 @@ def _run(
         merged, conflicts = merge_tags(dbsn_tags, osm_tags, specificity)
         merged = _normalise_osm_tags(merged)
 
+        # JOSM edits of the pair (`dbsn:<id>` resolution) are the end state; a tag the user set is no conflict
+        edit = new_resolutions.get(dbsn_id, {})
+        merged, dbsn_geom = apply_new_resolution(merged, dbsn_geom, edit)
+        conflicts = {k: v for k, v in conflicts.items() if k not in {t.lstrip("-") for t in edit.get("tags", {})}}
+
         # Zero-delta match: DBSN adds nothing (tags identical, near-identical geometry).
         # Dropped from review; --review-identical keeps them in _conflated.osm.
-        if not review_identical and not conflicts and not merge_note \
+        if not review_identical and not edit and not conflicts and not merge_note \
                 and is_zero_delta(result.matched_ious.get((dbsn_id, osm_id), 0.0), merged, osm_tags,
                                   identical_iou=config.get("identical_iou", 0.95)):
             n_identical += 1
@@ -915,9 +967,10 @@ def _run(
             for key, (ov, dv) in conflicts.items():
                 review_tags[f"note:conflate:{key}"] = f"{ov}→{dv}"
             conflated.append((review_tags, dbsn_geom))
-            safe_merged = {k: v for k, v in merged.items() if k not in conflicts}
-            if safe_merged != osm_tags:
-                osc_way_tag_modifies.append((osm_id, osm_version, safe_merged))
+            # merged keeps the OSM value of a conflicted key; a way modify replaces ALL tags, so none may be left out
+            kept_tags = _with_osm_source(merged, osm_tags)
+            if kept_tags != osm_tags:
+                osc_way_tag_modifies.append((osm_id, osm_version, kept_tags))
         else:
             safe = _way_nodes_safe(osm_id, way_nodes, node_way_count, tagged_nodes, node_to_ways, way_tags)
             if safe:
@@ -933,11 +986,12 @@ def _run(
                     osc_node_modifies.extend(nm)
                     osc_node_deletes.extend(nd)
                     osc_geom_modifies.append(wm)
+                    geometry_sources.append(dbsn_tags.get("source", ""))
                 else:
-                    osc_way_tag_modifies.append((osm_id, osm_version, merged))
+                    osc_way_tag_modifies.append((osm_id, osm_version, _with_osm_source(merged, osm_tags)))
                 conflated.append(({**review_tags, "note:conflate:geometry": "updated"}, dbsn_geom))
             else:
-                osc_way_tag_modifies.append((osm_id, osm_version, merged))
+                osc_way_tag_modifies.append((osm_id, osm_version, _with_osm_source(merged, osm_tags)))
                 shared_n, shared_ids = _shared_node_info(osm_id)
                 geom_note = f"shared_nodes:{shared_n}"
                 ambiguous.append(({**review_tags, "note:conflate:geometry": geom_note,
@@ -1071,6 +1125,7 @@ def _run(
                     osc_node_modifies.extend(nm)
                     osc_node_deletes.extend(nd)
                     osc_geom_modifies.append(wm)
+                    geometry_sources.append(final_tags.get("source", ""))
                 else:
                     osc_way_deletes.append((osm_id, version))
                     osc_replace_creates.append((final_tags, dbsn_geom_l))
@@ -1122,11 +1177,7 @@ def _run(
             osm_tags, osm_geom, version = osm_by_id[osm_id]
             if tag_overrides:
                 final_tags = _normalise_osm_tags(_apply_overrides(osm_tags, tag_overrides))
-                nd_refs = _way_nd_refs(osm_id, way_nodes)
-                if nd_refs is not None:
-                    osc_geom_modifies.append((osm_id, version, nd_refs, final_tags))
-                else:
-                    osc_way_tag_modifies.append((osm_id, version, final_tags))
+                osc_way_tag_modifies.append((osm_id, version, final_tags))  # OSM geometry kept: source untouched
                 conflated.append((final_tags, osm_geom))
             else:
                 conflated.append((osm_tags, osm_geom))
@@ -1136,11 +1187,7 @@ def _run(
         elif decision == "tag_update" and osm_id in osm_by_id:
             osm_tags, osm_geom, version = osm_by_id[osm_id]
             final_tags = _normalise_osm_tags(_apply_overrides(osm_tags, tag_overrides))
-            nd_refs = _way_nd_refs(osm_id, way_nodes)
-            if nd_refs is not None:
-                osc_geom_modifies.append((osm_id, version, nd_refs, final_tags))
-            else:
-                osc_way_tag_modifies.append((osm_id, version, final_tags))
+            osc_way_tag_modifies.append((osm_id, version, final_tags))
             dbsn_cid = res.get("dbsn_classid")
             if dbsn_cid and dbsn_cid in dbsn_geom_by_id:
                 # Geometry decision still open — re-expose both in ambiguous.osm for re-triage
@@ -1177,7 +1224,7 @@ def _run(
             yield shapely_mapping(geom), tags
 
     for suffix in ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm", "_changes.osc",
-                   "_blocks.geojson"):
+                   "_changeset.txt", "_blocks.geojson"):
         _out(code, date, suffix, out_slug).unlink(missing_ok=True)
 
     if blocks:
@@ -1195,7 +1242,15 @@ def _run(
         _out(code, date, "_changes.osc", out_slug),
         osc_all_creates, osc_way_tag_modifies, osc_way_deletes,
         osc_node_creates, osc_node_modifies, osc_node_deletes,
-        osc_geom_modifies, next_node_id,
+        osc_geom_modifies, next_node_id, way_nodes,
+    )
+    _out(code, date, "_changeset.txt", out_slug).write_text(
+        changeset_text(
+            len(osc_all_creates), len(osc_way_tag_modifies) + len(osc_geom_modifies), len(osc_way_deletes),
+            [*(tags.get("source", "") for tags, _ in osc_all_creates), *geometry_sources],
+            resolutions, p.get("region", ""),
+        ),
+        encoding="utf-8",
     )
 
     n_geom = len(osc_geom_modifies)
@@ -1275,6 +1330,14 @@ class ConflateTask(Task):
         config = _load_config(p["code"], p.get("region", ""))
         specificity = _load_specificity()
         pending = self._pending_edits()
+        if "conflate" in self._overwrite_steps:
+            # an explicit overwrite starts from scratch: saved edits are discarded, not absorbed
+            if pending:
+                print(f"  [edits  ] {p['code']}: --overwrite discards saved edits in "
+                      f"{', '.join(edited_sibling(f).name for f in pending)}")
+            dropped = drop_edited_copies([f for f in self._review_files() if f.exists()])
+            print(f"  [edits  ] {p['code']}: dropped {len(dropped)} edited copies")
+            pending = []
         if pending:
             _, out_slug = _slugs(self._area, self._osm_area)
             n = absorb_edits(pending, _out(p["code"], p["date"], "_resolutions.json", out_slug))
@@ -1305,7 +1368,8 @@ def _extra_args(parser) -> None:
     )
     parser.add_argument(
         "--apply-edits", action=argparse.BooleanOptionalAction, default=True,
-        help="Absorb saved *_new_edited.osm edits into the resolutions before regenerating (default on)",
+        help="Absorb saved *_new_edited.osm and *_conflated_edited.osm edits into the resolutions "
+             "before regenerating (default on)",
     )
     josm = parser.add_mutually_exclusive_group()
     josm.add_argument(
@@ -1348,6 +1412,11 @@ def main() -> None:
         _josm_open(targets, args.area, args.osm_area, host)
 
 
+def _has_data(path: Path) -> bool:
+    """True when the OSM XML file holds at least one node, way or relation."""
+    return any(elem.tag in ("node", "way", "relation") for _, elem in ET.iterparse(path, events=("start",)))
+
+
 def _josm_open(provinces: list, area: str | None, osm_area: str | None, host: str) -> None:
     """Open conflate review files + PBF as JOSM layers via remote control."""
     _, out_slug = _slugs(area, osm_area)
@@ -1375,7 +1444,7 @@ def _josm_open(provinces: list, area: str | None, osm_area: str | None, host: st
         for suffix, label in (("_ambiguous.osm", "ambiguous"), ("_new.osm", "new"),
                               ("_osm_only.osm", "osm-only"), ("_conflated.osm", "conflated")):
             out = _out(code, date, suffix, out_slug)
-            if out.exists():
+            if out.exists() and _has_data(out):  # JOSM errors on a layer with no data
                 # edit the sibling copy: Cmd+S saves next to the original, never over it
                 edited = edited_sibling(out)
                 if edited.exists() and edited.stat().st_mtime < out.stat().st_mtime:

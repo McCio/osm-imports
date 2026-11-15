@@ -35,6 +35,7 @@ def merge_tags(
                 merged[key] = osm_val
             else:
                 merged[key] = osm_val  # keep osm on tie/both-unlisted
-                conflicts[key] = (osm_val, dbsn_val)
+                if key != "source":  # stripped from the osmChange, so it cannot conflict there
+                    conflicts[key] = (osm_val, dbsn_val)
 
     return merged, conflicts

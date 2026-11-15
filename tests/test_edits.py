@@ -10,7 +10,7 @@ import pytest
 from shapely import from_wkt
 from shapely.geometry import MultiPolygon, box, mapping
 
-from dbsn.edits import absorb_edits, diff_edited
+from dbsn.edits import absorb_edits, diff_edited, drop_edited_copies, edited_sibling
 from utils.writers import write_osm_items
 
 
@@ -51,6 +51,104 @@ def test_new_feature_josm_deleted_primitive_is_skipped(tmp_path, extra_tags):
     _josm_delete(edited, "A")
 
     assert diff_edited(original, edited, "new") == {"dbsn:A": {"decision": "skip"}}
+
+
+def _pair(ref, geom, osm, note_extra="", **tags):
+    """A `_conflated` review feature: DBSN geometry + merged tags, mate noted as osm=<id>."""
+    return geom, {"building": "yes", "ref:dbsn": ref, "note:conflate": f"osm={osm}{note_extra}", **tags}
+
+
+def test_conflated_pair_removed_deletes_osm_mate_and_excludes_dbsn(tmp_path):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11"), _pair("B", B, "w22")])
+    _write(edited, [_pair("B", B, "w22")])
+
+    assert diff_edited(original, edited, "conflated") == {"w11": {"decision": "delete", "dbsn_classid": "A"}}
+
+
+@pytest.mark.parametrize("value", ["yes", "true", "1", "maybe"])
+def test_conflated_pair_removed_with_keep_osm_leaves_osm_alone(tmp_path, value):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11"), _pair("B", B, "w22")])
+    _write(edited, [_pair("A", A, "w11", keep_osm=value), _pair("B", B, "w22")])
+    _josm_delete(edited, "A")  # tagged, then deleted: the documented encoding
+
+    assert diff_edited(original, edited, "conflated") == {"w11": {"decision": "keep_osm", "dbsn_classid": "A"}}
+
+
+@pytest.mark.parametrize("value", ["yes", "true", "1", "maybe"])
+def test_conflated_pair_tagged_keep_osm_leaves_osm_alone_whatever_else_changed(tmp_path, value):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11"), _pair("B", B, "w22")])
+    _write(edited, [_pair("A", A, "w11", keep_osm=value, name="X"), _pair("B", B, "w22")])
+
+    assert diff_edited(original, edited, "conflated") == {"w11": {"decision": "keep_osm", "dbsn_classid": "A"}}
+
+
+@pytest.mark.parametrize("value", ["no", "false", "0"])
+def test_conflated_keep_osm_false_is_no_instruction(tmp_path, value):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11")])
+    _write(edited, [_pair("A", A, "w11", keep_osm=value)])
+
+    assert diff_edited(original, edited, "conflated") == {}
+
+
+def test_conflated_merged_pair_removed_acts_on_every_merged_dbsn_feature(tmp_path):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11", ",merged=X|Y")])
+    _write(edited, [])
+
+    assert diff_edited(original, edited, "conflated") == {
+        "w11": {"decision": "delete", "dbsn_classid": "A"},
+        "dbsn:X": {"decision": "skip"},
+        "dbsn:Y": {"decision": "skip"},
+    }
+
+
+def test_conflated_pair_untouched_yields_nothing(tmp_path):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11", **{"note:conflate:geometry": "updated"})])
+    _write(edited, [_pair("A", A, "w11")])
+
+    assert diff_edited(original, edited, "conflated") == {}
+
+
+def test_conflated_pair_edits_become_dbsn_overrides(tmp_path):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    moved = box(12.0005, 45.0, 12.0015, 45.001)
+    _write(original, [_pair("A", A, "w11", height="5")])
+    _write(edited, [_pair("A", moved, "w11", name="X")])
+
+    entries = diff_edited(original, edited, "conflated")
+
+    assert list(entries) == ["dbsn:A"]
+    assert entries["dbsn:A"]["tags"] == {"name": "X", "-height": ""}
+    assert from_wkt(entries["dbsn:A"]["geometry"]).equals(moved)
+
+
+def test_absorb_picks_up_conflated_edits(tmp_path):
+    original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
+    _write(original, [_pair("A", A, "w11")])
+    _write(edited, [])
+    resolutions = tmp_path / "VE_resolutions.json"
+
+    assert absorb_edits([original], resolutions) == 1
+    assert json.loads(resolutions.read_text()) == {"w11": {"decision": "delete", "dbsn_classid": "A"}}
+
+
+def test_drop_edited_copies_removes_every_sibling_and_keeps_originals(tmp_path):
+    files = [tmp_path / "VE_new.osm", tmp_path / "VE_conflated.osm", tmp_path / "VE_osm_only.osm"]
+    for f in files:
+        f.write_text("<osm/>")
+    for f in files[:2]:
+        edited_sibling(f).write_text("user edits")
+
+    dropped = drop_edited_copies(files)
+
+    assert dropped == [edited_sibling(f) for f in files[:2]]
+    assert not any(edited_sibling(f).exists() for f in files)
+    assert all(f.exists() for f in files)
 
 
 def _absorb_fixture(tmp_path):

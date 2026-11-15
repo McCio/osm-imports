@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import os
 import socket
+import xml.etree.ElementTree as ET
 from urllib.parse import quote
 
 from shapely.geometry import box
@@ -294,7 +295,7 @@ def test_josm_target_provinces_auto_only_ran_explicit_all():
 def _josm_setup(tmp_path, monkeypatch, edited_older: bool):
     """VE_new.osm + VE_new_edited.osm in tmp_path; urlopen stubbed to record URLs."""
     orig = tmp_path / "VE_new.osm"
-    orig.write_text("<osm/>")
+    orig.write_text("<osm><node id='-1' lat='45' lon='12'/></osm>")
     edited = tmp_path / "VE_new_edited.osm"
     edited.write_text("user edits")
     os.utime(orig, (2000, 2000))
@@ -313,6 +314,15 @@ def test_josm_open_warns_when_edited_older_than_original(tmp_path, monkeypatch, 
     assert "older" in capsys.readouterr().out
     assert edited.read_text() == "user edits"  # never overwritten
     assert opened == [josm_open_file_url(edited, "h:1")]
+
+
+def test_josm_open_skips_review_files_without_data(tmp_path, monkeypatch):
+    edited, opened = _josm_setup(tmp_path, monkeypatch, edited_older=False)
+    empty = tmp_path / "VE_osm_only.osm"
+    empty.write_text("<osm version='0.6' upload=\"never\">\n</osm>")
+    conflate._josm_open([{"code": "VE", "date": "d"}], None, None, "h:1")
+    assert not edited_sibling(empty).exists()  # no copy made for an empty layer
+    assert opened == [josm_open_file_url(edited, "h:1")]  # only the layer with data
 
 
 def test_josm_open_silent_when_edited_is_current(tmp_path, monkeypatch, capsys):
@@ -369,6 +379,73 @@ def test_merge_unlisted_values_conflict():
     )
     assert merged["building"] == "barn"
     assert conflicts == {"building": ("barn", "farm")}
+
+
+def test_osc_tag_only_way_modify_keeps_the_way_nodes(tmp_path):
+    # an osmChange way modify replaces the whole way: without its <nd> refs the API rejects it
+    osc = tmp_path / "x.osc"
+    conflate._osc_write(osc, [], [("w7", 3, {"building": "yes", "name": "X"})], [],
+                        way_nodes={7: [10, 11, 12, 10]})
+
+    way = ET.parse(osc).getroot().find("modify/way")
+
+    assert [nd.get("ref") for nd in way.findall("nd")] == ["10", "11", "12", "10"]
+    assert {t.get("k"): t.get("v") for t in way.findall("tag")} == {"building": "yes", "name": "X"}
+
+
+def test_osc_source_kept_when_osm_geometry_kept_and_dropped_when_geometry_applied(tmp_path):
+    tags = {"building": "yes", "source": "survey", "ref:dbsn": "A"}
+    osc = tmp_path / "x.osc"
+    conflate._osc_write(
+        osc, [(tags, box(0, 0, 1e-4, 1e-4))], [("w7", 3, tags)], [],
+        geom_way_modifies=[("w8", 2, [20, 21, 22], tags)], way_nodes={7: [10, 11, 12, 10]},
+    )
+
+    root = ET.parse(osc).getroot()
+
+    assert {t.get("k") for t in root.find("create/way").findall("tag")} == {"building"}  # DBSN geometry: no source
+    geom_way, tag_way = root.findall("modify/way")  # <modify> writes geometry updates first
+    assert {t.get("k") for t in geom_way.findall("tag")} == {"building"}
+    assert {t.get("k"): t.get("v") for t in tag_way.findall("tag")} == {"building": "yes", "source": "survey"}
+
+
+def test_osm_source_kept_ignores_the_dbsn_source():
+    assert conflate._with_osm_source({"building": "yes", "source": "DBSN"}, {"building": "yes"}) == {"building": "yes"}
+    assert conflate._with_osm_source({"building": "yes", "source": "DBSN"}, {"source": "survey"}) == {
+        "building": "yes", "source": "survey"}
+
+
+def test_changeset_text_counts_and_deduplicated_source_with_region_named():
+    text = conflate.changeset_text(55, 1, 0, ["DBSN;IGM;Regione", "DBSN;IGM;Regione", "Comune;DBSN"], {}, "Veneto")
+    assert text == "comment=Added 55 features, updated 1 feature\nsource=DBSN;IGM;Regione Veneto;Comune\n"
+
+
+def test_changeset_text_reviewed_import_counts_what_the_resolutions_did():
+    resolutions = {
+        "dbsn:a": {"decision": "skip"}, "dbsn:b": {"decision": "skip"},
+        "dbsn:c": {"geometry": "POLYGON EMPTY"}, "dbsn:d": {"tags": {"name": "X"}},
+        "w1": {"decision": "delete", "dbsn_classid": "e"}, "w2": {"decision": "keep_osm", "dbsn_classid": "f"},
+        "w3": {"decision": "replace", "dbsn_classid": "g"},
+    }
+    text = conflate.changeset_text(0, 2, 1, [], resolutions)
+    assert text == ("comment=Reviewed import: updated 2 features, deleted 1 feature "
+                    "(2 skipped, 2 reshaped, 1 deleted, 1 kept OSM)\n")
+
+
+def test_changeset_text_reviewed_import_without_countable_resolutions_is_prefix_only():
+    text = conflate.changeset_text(3, 0, 0, [], {"w3": {"decision": "replace", "dbsn_classid": "g"}})
+    assert text == "comment=Reviewed import: added 3 features\n"
+
+
+def test_merge_differing_source_is_no_conflict():
+    # `source` never reaches the osmChange, so differing values must not block the pair
+    merged, conflicts = merge_tags(
+        dbsn_tags={"building": "yes", "source": "DBSN;IGM"},
+        osm_tags={"building": "yes", "source": "Ministero"},
+        specificity=_SPEC,
+    )
+    assert conflicts == {}
+    assert merged["source"] == "Ministero"
 
 
 def test_merge_additive_fill():

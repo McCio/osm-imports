@@ -146,17 +146,18 @@ Useful flags:
 | Flag | Effect |
 |---|---|
 | `--osm-area NAME\|r/ID\|w/ID` | Further clip to an OSM-side area — an admin relation or named area (relation or closed way) read from the province PBF, by name (`Isola dei Petroli`) or id (`r/6628636`, `w/107637324`). Intersected with `--area` when both given; outputs get an `_osm-` slug so they never shadow unslugged runs. Match is exact + case-insensitive; needs the PBF already downloaded. |
-| `--josm [HOST:PORT]` | After conflation, open the PBF (reference layer) plus the `ambiguous`, `new`, `osm-only` and `conflated` review files in JOSM via remote control (default `localhost:8111`). Enable remote control in JOSM preferences first. Without `--josm` or `--no-josm`, this happens automatically when JOSM answers on the default host, only for provinces conflated in this run (an explicit `--josm` opens every selected province). Each review file opens as an editable copy `<file>_edited.osm` (created once, never overwritten; a warning appears when it is older than the regenerated original, delete it for a fresh copy), bound to its file so Cmd+S saves in place; upload stays disabled (`upload="never"`). Each run adds fresh layers — close stale ones manually (JOSM has no delete-layer remote call). |
+| `--josm [HOST:PORT]` | After conflation, open the PBF (reference layer) plus the `ambiguous`, `new`, `osm-only` and `conflated` review files in JOSM via remote control (default `localhost:8111`). Enable remote control in JOSM preferences first. Without `--josm` or `--no-josm`, this happens automatically when JOSM answers on the default host, only for provinces conflated in this run (an explicit `--josm` opens every selected province). Review files without data are not opened (JOSM rejects an empty layer). Each other review file opens as an editable copy `<file>_edited.osm` (created once, never overwritten; a warning appears when it is older than the regenerated original, delete it for a fresh copy), bound to its file so Cmd+S saves in place; upload stays disabled (`upload="never"`). Each run adds fresh layers — close stale ones manually (JOSM has no delete-layer remote call). |
 | `--no-josm` | Never open layers in JOSM, even when it is running. |
 | `--overwrite conflate` / `--overwrite pbf` | Re-run match logic on cached PBF / re-download the PBF |
 | `--review-identical` | Keep zero-delta matches (IoU≥`identical_iou`, no tag changes) in `_conflated.osm` |
-| `--apply-edits` / `--no-apply-edits` | Default on. Before regenerating, absorb edits saved in `<file>_edited.osm` into `_resolutions.json` (`_new` only for now), then replace the `_edited` copy with a fresh one. Unsaved JOSM edits are not on disk and cannot be absorbed. |
+| `--apply-edits` / `--no-apply-edits` | Default on. Before regenerating, absorb edits saved in `<file>_edited.osm` into `_resolutions.json` (`_new` and `_conflated` for now), then replace the `_edited` copy with a fresh one. Unsaved JOSM edits are not on disk and cannot be absorbed. `--overwrite conflate` (or bare `--overwrite`) starts from scratch instead: every `_edited` copy is deleted without absorbing, saved edits included, and `--josm` then opens fresh copies. |
 
 #### Output files
 
 | File | Contents |
 |---|---|
-| `_changes.osc` | OSC change file: `create` for new buildings, `modify` for tag updates. Deletes are only emitted when a triage decision explicitly requests one (see below). |
+| `_changes.osc` | OSC change file: `create` for new buildings, `modify` for tag and geometry updates. Deletes are only emitted when a triage decision explicitly requests one (see below). A way's `source` tag is kept only where the OSM geometry is kept; geometry that comes from DBSN (created, replaced or hand edited) carries none, the changeset does. |
+| `_changeset.txt` | Changeset tags to paste into the upload dialog (an osmChange file cannot carry them): `comment=` computed from the counts (`Added 55 features, updated 15 features`; with resolutions: `Reviewed import: added 55 features, updated 15 features (3 skipped, 15 reshaped)`, counting skipped, reshaped, deleted and kept OSM) and `source=`, the DBSN `source` values of every created or geometry-modified feature, `;`-joined without duplicates, the bare `Regione` named after the province's region (`Regione Veneto`). |
 | `_new.osm` | DBSN features with no OSM match — will be created on upload |
 | `_ambiguous.osm` | Feature pairs that need human review (see below) |
 | `_osm_only.osm` | OSM features with no DBSN match (kept for reference; not in the change file) |
@@ -198,6 +199,15 @@ Alternatively edit the layer directly. `dbsn-conflate --josm` opens `_new_edited
 - a feature you delete is skipped (not created);
 - a feature whose tags or shape you change is created with your tags and shape (`geometry` WKT and `-key` tag deletions are recorded in `_resolutions.json`);
 - features without changes need nothing. `note:*` tags are ignored.
+
+#### Reviewing `_conflated.osm` in JOSM
+
+Each pair is one feature: DBSN shape, merged tags, `ref:dbsn`, and the OSM mate in `note:conflate=osm=wXXX`. Edit `_conflated_edited.osm`, save, re-run `dbsn-conflate`. The edited layer is the desired end state:
+
+- a pair whose tags or shape you change gets your tags and shape on the OSM way's modify (`-key` deletions and `geometry` WKT recorded in `_resolutions.json` under `dbsn:<classid>`); a tag you set resolves a `note:conflate:<key>` conflict on that key;
+- a pair you delete deletes its OSM way and the DBSN feature is not imported;
+- to leave OSM alone instead, tag the pair `keep_osm=yes` (or `true`/`1`) and leave it in the layer: OSM is untouched, the DBSN feature is not imported, and any other edit of that pair is ignored (any other value except `no`/`false`/`0` warns and counts as keep). Do not delete it: JOSM drops deleted pairs from the saved file, tag included, so it reads as a plain removal;
+- a pair merged from several DBSN features (`merged=a|b` in the note) is handled as a whole: none of its DBSN features reappear in `_new.osm`.
 
 #### Reviewing `_osm_only.osm`
 
