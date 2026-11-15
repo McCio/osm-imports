@@ -213,6 +213,12 @@ Each pair is one feature: DBSN shape, merged tags, `ref:dbsn`, and the OSM mate 
 
 Look features up in `dbsn-triage` (`osm:wXXX`) and record `delete` or `tag_update` interactively.
 
+Alternatively edit `_osm_only_edited.osm`, save, re-run `dbsn-conflate`. A feature that stays in the layer is left alone in OSM; edit it only to change it:
+
+- a feature you delete is deleted in OSM;
+- a feature whose tags you change gets a tag-only modify (`-key` deletions recorded in `_resolutions.json`, keyed by `wXXX`);
+- a feature whose shape you change is moved in place (same way and node ids, `geometry` WKT recorded in `_resolutions.json`), and the changeset names no `source` for it. If its nodes are tagged or shared with a highway, waterway, railway or natural way, the tag edit still goes out, the shape does not: your shape appears in `_ambiguous.osm` with `note:conflate=geometry_unsafe`. Relation shapes are not moved.
+
 #### Re-running after triage
 
 `_resolutions.json` is read automatically on the next `dbsn-conflate` run. Resolved pairs are excluded from `_ambiguous.osm`; `replace` decisions update the OSC; `skip` decisions suppress new-feature creation.

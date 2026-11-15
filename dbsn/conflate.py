@@ -529,6 +529,34 @@ def _update_geometry_osc(
     )
 
 
+def osm_geometry_edit_osc(
+    osm_id: str,
+    osm_version: int,
+    tags: dict,
+    edit_geom,
+    osm_geom,
+    way_nodes: dict[int, list[int]],
+    node_coords: dict[int, tuple[float, float]],
+    node_versions: dict[int, int],
+    node_way_count: dict[int, int],
+    tagged_nodes: set[int],
+    node_to_ways: dict[int, list[int]],
+    way_tags: dict[int, dict],
+    next_node_id: list[int],
+):
+    """In-place way update for the shape the user drew over an OSM-only way, or None when its nodes are unsafe.
+
+    None also covers relations and ways without node refs: the caller keeps the feature for review.
+    """
+    if not _way_nodes_safe(osm_id, way_nodes, node_way_count, tagged_nodes, node_to_ways, way_tags):
+        return None
+    return _update_geometry_osc(
+        osm_id, osm_version, edit_geom, osm_geom, tags,
+        way_nodes, node_coords, node_versions, node_way_count, tagged_nodes, node_to_ways, way_tags,
+        next_node_id,
+    )
+
+
 # ---------------------------------------------------------------------------
 # osmChange writing
 # ---------------------------------------------------------------------------
@@ -1187,9 +1215,27 @@ def _run(
         elif decision == "tag_update" and osm_id in osm_by_id:
             osm_tags, osm_geom, version = osm_by_id[osm_id]
             final_tags = _normalise_osm_tags(_apply_overrides(osm_tags, tag_overrides))
-            osc_way_tag_modifies.append((osm_id, version, final_tags))
             dbsn_cid = res.get("dbsn_classid")
-            if dbsn_cid and dbsn_cid in dbsn_geom_by_id:
+            # a shape the user drew over an OSM-only way (JOSM edit): moved in place when its nodes allow
+            edit_geom = from_wkt(res["geometry"]) if res.get("geometry") and not dbsn_cid else None
+            geom_result = edit_geom is not None and osm_geometry_edit_osc(
+                osm_id, version, final_tags, edit_geom, osm_geom,
+                way_nodes, node_coords, node_versions, node_way_count, tagged_nodes, node_to_ways, way_tags,
+                next_node_id,
+            )
+            if geom_result:
+                nc, nm, nd, wm = geom_result
+                osc_node_creates.extend(nc)
+                osc_node_modifies.extend(nm)
+                osc_node_deletes.extend(nd)
+                osc_geom_modifies.append(wm)
+                conflated.append((final_tags, edit_geom))
+                continue
+            osc_way_tag_modifies.append((osm_id, version, final_tags))
+            if edit_geom is not None:
+                # nodes shared or tagged: the tag edit goes out, the drawn shape stays in review
+                ambiguous.append(({**final_tags, "osm:id": osm_id, "note:conflate": "geometry_unsafe"}, edit_geom))
+            elif dbsn_cid and dbsn_cid in dbsn_geom_by_id:
                 # Geometry decision still open — re-expose both in ambiguous.osm for re-triage
                 ambiguous.append(({**final_tags, "osm:id": osm_id,
                                    "note:conflate": f"tag_update,dbsn={dbsn_cid}"}, osm_geom))
@@ -1368,8 +1414,8 @@ def _extra_args(parser) -> None:
     )
     parser.add_argument(
         "--apply-edits", action=argparse.BooleanOptionalAction, default=True,
-        help="Absorb saved *_new_edited.osm and *_conflated_edited.osm edits into the resolutions "
-             "before regenerating (default on)",
+        help="Absorb saved *_new_edited.osm, *_conflated_edited.osm and *_osm_only_edited.osm edits into "
+             "the resolutions before regenerating (default on)",
     )
     josm = parser.add_mutually_exclusive_group()
     josm.add_argument(

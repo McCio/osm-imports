@@ -69,6 +69,46 @@ def test_new_resolution_without_geometry_keeps_geometry():
 
 
 # ---------------------------------------------------------------------------
+# Hand-edited geometry of an OSM-only way
+# ---------------------------------------------------------------------------
+
+def _osm_way_graph(**overrides):
+    """Way 1 = a 0.0001° square on nodes 1-4 (closed by 1), no other way touches it."""
+    corners = {1: (12.0, 45.0), 2: (12.0001, 45.0), 3: (12.0001, 45.0001), 4: (12.0, 45.0001)}
+    graph = dict(
+        way_nodes={1: [1, 2, 3, 4, 1]},
+        node_coords=corners,
+        node_versions={n: 3 for n in corners},
+        node_way_count={n: 1 for n in corners},
+        tagged_nodes=set(),
+        node_to_ways={n: [1] for n in corners},
+        way_tags={1: {"building": "yes"}},
+        next_node_id=[-1],
+    )
+    return {**graph, **overrides}
+
+
+def test_osm_geometry_edit_moves_the_ways_own_nodes_in_place():
+    shifted = box(12.00001, 45.0, 12.00011, 45.0001)  # ~1 m east
+    outcome = conflate.osm_geometry_edit_osc("w1", 7, {"building": "yes"}, shifted, box(12.0, 45.0, 12.0001, 45.0001),
+                                             **_osm_way_graph())
+
+    _, node_modifies, _, way_modify = outcome
+    osm_id, version, nd_refs, tags = way_modify
+    assert (osm_id, version, tags) == ("w1", 7, {"building": "yes"})
+    assert sorted(nd_refs) == [1, 2, 3, 4]  # the way's own nodes: no new ids, history kept (ring may start anywhere)
+    assert {n for n, *_ in node_modifies} == {1, 2, 3, 4}
+
+
+def test_osm_geometry_edit_is_refused_when_a_node_is_tagged():
+    shifted = box(12.00001, 45.0, 12.00011, 45.0001)
+    outcome = conflate.osm_geometry_edit_osc("w1", 7, {"building": "yes"}, shifted, box(12.0, 45.0, 12.0001, 45.0001),
+                                             **_osm_way_graph(tagged_nodes={2}))
+
+    assert outcome is None
+
+
+# ---------------------------------------------------------------------------
 # Blocks (spatial clustering of conflation outcome buckets)
 # ---------------------------------------------------------------------------
 

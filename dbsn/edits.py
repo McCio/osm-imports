@@ -16,8 +16,13 @@ from dbsn.triage import _is_conflate_meta
 # JOSM and the osmium writer both keep 1e-7 degree precision
 _GEOM_TOLERANCE = 1e-8
 
-# review-file stem suffix → diff kind; the other review files follow in later slices
-_KINDS = {"new": "new", "conflated": "conflated"}
+# review-file stem suffixes (= diff kinds) that are absorbed; `_ambiguous` follows in a later slice
+_KINDS = ("new", "conflated", "osm_only")
+
+
+def _kind(path: Path) -> str | None:
+    """Diff kind of a review file (`X_osm_only.osm` -> `osm_only`), None for the kinds not absorbed yet."""
+    return next((k for k in _KINDS if path.stem.endswith(f"_{k}")), None)
 
 
 _KEEP_TRUE = frozenset({"yes", "true", "1"})
@@ -33,8 +38,8 @@ class _Feature:
     deleted: bool = False  # a JOSM `action="delete"` primitive
 
 
-def _read_features(path: Path) -> dict[str, _Feature]:
-    """`ref:dbsn` → feature, for every tagged way or multipolygon relation in an OSM file."""
+def _read_features(path: Path, key: str = "ref:dbsn") -> dict[str, _Feature]:
+    """`key` tag value → feature, for every way or multipolygon relation carrying `key` in an OSM file."""
     root = ET.parse(path).getroot()
     nodes = {n.get("id"): (float(n.get("lon")), float(n.get("lat"))) for n in root.iter("node")}
     rings = {
@@ -44,7 +49,7 @@ def _read_features(path: Path) -> dict[str, _Feature]:
     out: dict[str, _Feature] = {}
     for elem in root:
         tags = {t.get("k"): t.get("v") for t in elem.iter("tag")}
-        if "ref:dbsn" not in tags:
+        if key not in tags:
             continue
         if elem.tag == "way":
             geom = rings[elem.get("id")]
@@ -55,7 +60,7 @@ def _read_features(path: Path) -> dict[str, _Feature]:
             geom = outer.difference(inner)
         else:
             continue
-        out[tags["ref:dbsn"]] = _Feature(
+        out[tags[key]] = _Feature(
             {k: v for k, v in tags.items() if k not in ("type", "keep_osm") and not _is_conflate_meta(k)},
             geom,
             tags.get("note:conflate", ""),
@@ -128,7 +133,7 @@ def pending_edits(review_files: list[Path]) -> list[Path]:
     """
     return [
         p for p in review_files
-        if p.stem.rsplit("_", 1)[-1] in _KINDS
+        if _kind(p)
         and edited_sibling(p).exists()
         and edited_sibling(p).stat().st_mtime_ns > p.stat().st_mtime_ns
     ]
@@ -141,7 +146,7 @@ def absorb_edits(review_files: list[Path], resolutions_path: Path) -> int:
     """
     found: dict[str, dict] = {}
     for path in pending_edits(review_files):
-        found.update(diff_edited(path, edited_sibling(path), _KINDS[path.stem.rsplit("_", 1)[-1]]))
+        found.update(diff_edited(path, edited_sibling(path), _kind(path)))
     if not found:
         return 0
     resolutions = json.loads(resolutions_path.read_text(encoding="utf-8")) if resolutions_path.exists() else {}
@@ -155,7 +160,8 @@ def absorb_edits(review_files: list[Path], resolutions_path: Path) -> int:
 
 def diff_edited(original: Path, edited: Path, kind: str) -> dict[str, dict]:
     """Resolution entries (`dbsn:<classid>` → entry) for what the user changed in `edited`."""
-    before, after = _read_features(original), _read_features(edited)
+    key = "osm:id" if kind == "osm_only" else "ref:dbsn"
+    before, after = _read_features(original, key), _read_features(edited, key)
     entries: dict[str, dict] = {}
     for ref, feat in before.items():
         gone = ref not in after or after[ref].deleted
@@ -164,13 +170,18 @@ def diff_edited(original: Path, edited: Path, kind: str) -> dict[str, dict]:
             entries.update(_pair_decision(ref, feat, keep))
             continue
         if gone:
-            entries[f"dbsn:{ref}"] = {"decision": "skip"}
+            if kind == "osm_only":
+                entries[ref] = {"decision": "delete"}
+            else:
+                entries[f"dbsn:{ref}"] = {"decision": "skip"}
             continue
         entry: dict = {}
         if overrides := _tag_overrides(feat.tags, after[ref].tags):
             entry["tags"] = overrides
         if not feat.geom.normalize().equals_exact(after[ref].geom.normalize(), _GEOM_TOLERANCE):
             entry["geometry"] = to_wkt(after[ref].geom, rounding_precision=7)
-        if entry:
+        if entry and kind == "osm_only":
+            entries[ref] = {"decision": "tag_update", **entry}
+        elif entry:
             entries[f"dbsn:{ref}"] = entry
     return entries

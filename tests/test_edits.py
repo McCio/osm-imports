@@ -127,6 +127,61 @@ def test_conflated_pair_edits_become_dbsn_overrides(tmp_path):
     assert from_wkt(entries["dbsn:A"]["geometry"]).equals(moved)
 
 
+def _osm(osm_id, geom, **tags):
+    """An `_osm_only` review feature: OSM geometry and tags, identity in `osm:id`."""
+    return geom, {"building": "yes", "osm:id": osm_id, **tags}
+
+
+def test_osm_only_feature_removed_is_deleted(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _write(original, [_osm("w11", A), _osm("w22", B)])
+    _write(edited, [_osm("w22", B)])
+
+    assert diff_edited(original, edited, "osm_only") == {"w11": {"decision": "delete"}}
+
+
+def test_osm_only_feature_untouched_yields_nothing(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _write(original, [_osm("w11", A, **{"note:conflate": "contained_by,dbsn=X"})])
+    _write(edited, [_osm("w11", A)])
+
+    assert diff_edited(original, edited, "osm_only") == {}
+
+
+def test_osm_only_tag_edits_become_tag_update(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _write(original, [_osm("w11", A, height="5", name="Old")])
+    _write(edited, [_osm("w11", A, name="New")])
+
+    assert diff_edited(original, edited, "osm_only") == {
+        "w11": {"decision": "tag_update", "tags": {"name": "New", "-height": ""}},
+    }
+
+
+def test_osm_only_geometry_edit_is_recorded_as_wkt_on_the_osm_id(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    moved = box(12.0005, 45.0, 12.0015, 45.001)
+    _write(original, [_osm("w11", A)])
+    _write(edited, [_osm("w11", moved, name="X")])
+
+    entries = diff_edited(original, edited, "osm_only")
+
+    assert list(entries) == ["w11"]
+    assert entries["w11"]["decision"] == "tag_update"
+    assert entries["w11"]["tags"] == {"name": "X"}
+    assert from_wkt(entries["w11"]["geometry"]).equals(moved)
+
+
+def test_absorb_picks_up_osm_only_edits(tmp_path):
+    original, edited = tmp_path / "VE_osm_only.osm", tmp_path / "VE_osm_only_edited.osm"
+    _write(original, [_osm("w11", A)])
+    _write(edited, [])
+    resolutions = tmp_path / "VE_resolutions.json"
+
+    assert absorb_edits([original], resolutions) == 1
+    assert json.loads(resolutions.read_text()) == {"w11": {"decision": "delete"}}
+
+
 def test_absorb_picks_up_conflated_edits(tmp_path):
     original, edited = tmp_path / "VE_conflated.osm", tmp_path / "VE_conflated_edited.osm"
     _write(original, [_pair("A", A, "w11")])
