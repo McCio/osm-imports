@@ -23,6 +23,7 @@ from dbsn.common import (
 )
 from dbsn.extract import ExtendTask, ExtractRawTask, fgb_path
 from dbsn.layers import LayerDef, area_key, get_layers, layer_slug, resolve_layer_names
+from dbsn.neighbours import relevant_neighbours
 from utils.dag import Task, run_dag
 from utils.writers import translate_features, write_osm_items
 
@@ -199,10 +200,8 @@ class ConvertTask(Task):
     def dependencies(self) -> list[Task]:
         deps: list[Task] = [ExtractRawTask(self._prov, self._overwrite_steps, self._layer_names)]
         if self._extend:
-            for nb_code in self._prov.get("neighbours", []):
-                nb = self._sources.get(nb_code)
-                if nb:
-                    deps.append(ExtendTask(self._prov, nb, self._overwrite_steps, self._layer_names))
+            for nb in relevant_neighbours(self._prov, self._sources, self._area):
+                deps.append(ExtendTask(self._prov, nb, self._overwrite_steps, self._layer_names))
         return deps
 
     def _out_path(self) -> Path:

@@ -136,6 +136,7 @@ class Province(TypedDict):
     igm_zip_size: NotRequired[int | None]
     wmit_zip_size: NotRequired[int | None]
     neighbours: NotRequired[list[str]]
+    bbox: NotRequired[list[float]]  # [minx, miny, maxx, maxy], written by dbsn-neighbours
 
 
 def max_date() -> str:
@@ -165,6 +166,8 @@ def read_sources() -> list[Province]:
                 p["wmit_zip_size"] = v["wmit_zip_size"]
             if "neighbours" in v:
                 p["neighbours"] = v["neighbours"]
+            if "bbox" in v:
+                p["bbox"] = v["bbox"]
             result.append(p)
         return result
 
@@ -333,11 +336,11 @@ def _max_date_main() -> None:
     print(max_date())
 
 
-def add_area_arg(parser: argparse.ArgumentParser) -> None:
+def add_area_arg(parser: argparse.ArgumentParser, help: str | None = None) -> None:
     parser.add_argument(
         "--area",
         metavar="LOCALITY",
-        help="Filter output to features intersecting this loc_sg locality (e.g. 'Marghera')",
+        help=help or "Filter output to features intersecting this loc_sg locality (e.g. 'Marghera')",
     )
 
 

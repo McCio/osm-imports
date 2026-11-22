@@ -57,7 +57,7 @@ def main() -> None:
         sys.exit(f"No province matched '{args.province}'")
 
     # Step 1: Neighbours — run before DAG build so dependency edges are known
-    all_have_neighbours = all("neighbours" in p for p in provinces)
+    all_have_neighbours = all("neighbours" in p and "bbox" in p for p in provinces)
     if "neighbours" in overwrite_steps or args.neighbours or not all_have_neighbours:
         print("=== Step 1: Neighbours ===")
         neighbours_mod.run(read_sources(), provinces,

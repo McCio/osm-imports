@@ -41,7 +41,7 @@ from dbsn.common import (
     read_sources,
 )
 from dbsn.convert import ConvertTask
-from dbsn.download_pbf import DownloadPbfTask, find_pbf
+from dbsn.download_pbf import DownloadPbfTask, _osmium_extract, find_pbf
 from dbsn.download_pbf import _normalize as _pbf_normalize
 from dbsn.edits import absorb_edits, drop_edited_copies, edited_sibling, pending_edits, unedited_copies
 from dbsn.layers import area_key, get_layers, layer_slug, resolve_layer_names
@@ -924,6 +924,15 @@ def _staleness_reason(code: str, area: str | None, outputs: list[Path]) -> str |
     return None
 
 
+def _clip_pbf(pbf: Path, dst: Path, clip) -> Path:
+    """Clip pbf to the run's geometry (rebuilt when older than pbf), so _parse_osm's node and way
+    registries cover the clip instead of the whole province. find_pbf globs never match this name."""
+    if not dst.exists() or dst.stat().st_mtime < pbf.stat().st_mtime:
+        print(f"  [clip   ] {pbf.name} → {dst.name}")
+        _osmium_extract(pbf, dst, clip)
+    return dst
+
+
 def _run(
     p: Province,
     overwrite_conflate: bool,
@@ -975,6 +984,9 @@ def _run(
         print(f"  [skip   ] {code}: PBF not found, run dbsn-conflate --download first",
               file=sys.stderr)
         return
+
+    if osm_area and clip is not None and not clip.is_empty:
+        pbf = _clip_pbf(pbf, _out(code, date, ".clip.osm.pbf", out_slug), clip)
 
     print(f"  [parse  ] {code}: reading OSM features from {pbf.name}")
     (osm_raw, node_way_count, tagged_nodes, way_nodes,

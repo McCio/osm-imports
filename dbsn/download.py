@@ -10,6 +10,7 @@ from dbsn.common import (
     OSM_DIR,
     ZIPS_DIR,
     Province,
+    add_area_arg,
     add_max_weight_arg,
     http_client,
     parse_args,
@@ -17,6 +18,7 @@ from dbsn.common import (
     read_sources,
     rel,
 )
+from dbsn.neighbours import relevant_neighbours
 from utils.dag import Task, run_dag
 
 
@@ -159,6 +161,7 @@ def run(provinces: list[Province], overwrite: bool, download_neighbours: bool = 
 def main() -> None:
     def _setup(parser) -> None:
         parser.add_argument("--no-neighbours", action="store_true", help="Skip pre-fetching neighbour ZIPs")
+        add_area_arg(parser, "loc_sg locality (e.g. 'Marghera'): only the neighbours touching it are fetched")
         add_max_weight_arg(parser)
 
     args = parse_args("Step 1: download province ZIP archives", setup=_setup)
@@ -169,10 +172,7 @@ def main() -> None:
     for prov in args.provinces:
         tasks.append(DownloadTask(prov, overwrite_steps))
         if not args.no_neighbours:
-            for nb_code in prov.get("neighbours", []):
-                nb = sources_by_code.get(nb_code)
-                if nb:
-                    tasks.append(DownloadTask(nb))
+            tasks.extend(DownloadTask(nb) for nb in relevant_neighbours(prov, sources_by_code, args.area))
 
     run_dag(tasks, args.max_weight, overwrite_steps)
 

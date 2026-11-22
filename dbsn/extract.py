@@ -17,6 +17,7 @@ from dbsn.common import (
     UNZIPPED_DIR,
     ZIPS_DIR,
     Province,
+    add_area_arg,
     add_layers_arg,
     add_max_weight_arg,
     http_client,
@@ -28,6 +29,7 @@ from dbsn.common import (
 )
 from dbsn.download import DownloadTask
 from dbsn.layers import LayerSpec, get_layer_specs, resolve_layer_names
+from dbsn.neighbours import relevant_neighbours
 from utils.dag import Task, run_dag
 
 _WGS84 = CRS.from_epsg(4326)
@@ -297,24 +299,28 @@ def extend_pair(
             print(f"  [warn   ] ext {c1}_{c2} ({spec.name}): missing FGB(s) {missing}, skipping", file=sys.stderr)
             continue
 
-        p1_features: dict[str, dict] = {}
-        p1_schema: dict | None = None
+        # Passes keep only classids present in both provinces, never a whole province in memory
         with fiona.open(str(p1_fgb)) as src:
             p1_schema = {"geometry": "Unknown", "properties": src.schema["properties"]}
-            for feat in src:
-                cid = feat["properties"].get("classid")
-                if cid:
-                    p1_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
+            p1_ids = {cid for feat in src if (cid := feat["properties"].get("classid"))}
 
-        if not p1_features:
+        if not p1_ids:
             continue
 
         shared_nb: dict[str, list[dict]] = {}
         with fiona.open(str(p2_fgb)) as src:
             for feat in src:
                 cid = feat["properties"].get("classid")
-                if cid and cid in p1_features:
+                if cid and cid in p1_ids:
                     shared_nb[cid] = [{"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}]
+
+        p1_features: dict[str, dict] = {}
+        if shared_nb:
+            with fiona.open(str(p1_fgb)) as src:
+                for feat in src:
+                    cid = feat["properties"].get("classid")
+                    if cid in shared_nb:
+                        p1_features[cid] = {"geometry": dict(feat["geometry"]), "properties": dict(feat["properties"])}
 
         _write_ext_fgb(ext_path, p1_schema, p1_features, shared_nb, spec.name)
 
@@ -443,6 +449,7 @@ def main() -> None:
 
     def _setup(parser) -> None:
         parser.add_argument("--no-extend", action="store_true", help="Skip extension phase (no ext files)")
+        add_area_arg(parser, "loc_sg locality (e.g. 'Marghera'): only the neighbours touching it are extended")
         add_layers_arg(parser, all_layer_names)
         add_max_weight_arg(parser)
 
@@ -463,10 +470,8 @@ def main() -> None:
         names = names_by_code[prov["code"]]
         tasks.append(ExtractRawTask(prov, overwrite_steps, layer_names=names))
         if not args.no_extend:
-            for nb_code in prov.get("neighbours", []):
-                nb = sources_by_code.get(nb_code)
-                if nb:
-                    tasks.append(ExtendTask(prov, nb, overwrite_steps, names))
+            for nb in relevant_neighbours(prov, sources_by_code, args.area):
+                tasks.append(ExtendTask(prov, nb, overwrite_steps, names))
 
     run_dag(tasks, args.max_weight, overwrite_steps)
 

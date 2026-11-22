@@ -6,10 +6,10 @@ import sys
 import unicodedata
 
 import httpx
-from shapely.geometry import MultiLineString
+from shapely.geometry import MultiLineString, box
 from tenacity import Retrying, retry_if_exception, stop_after_delay
 
-from dbsn.common import DATA_DIR, SOURCES_JSON, Province, http_client, parse_args, read_sources
+from dbsn.common import DATA_DIR, SOURCES_JSON, Province, http_client, load_area_clip, parse_args, read_sources
 
 _OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 _ADJACENCY_THRESHOLD = 0.009  # degrees (≈1 km)
@@ -169,6 +169,29 @@ def _match(p: Province, elements: list[dict], *, tty: bool) -> dict | None:
     return None
 
 
+_clip_cache: dict[tuple[str, str], object] = {}
+
+
+def relevant_neighbours(p: Province, sources_by_code: dict[str, Province], area: str | None = None) -> list[Province]:
+    """Neighbours of p to process. With area: only those whose bbox lies within the adjacency
+    threshold of the area clip (a neighbour without bbox, or an unavailable clip, keeps all)."""
+    nbs = [sources_by_code[c] for c in p.get("neighbours", []) if c in sources_by_code]
+    if not area:
+        return nbs
+    key = (p["code"], area)
+    if key not in _clip_cache:
+        from dbsn.download import DownloadTask  # noqa: PLC0415 (download imports this module)
+
+        zip_task = DownloadTask(p)  # the clip is read from the province ZIP
+        if not zip_task.skip_if():
+            zip_task.run()
+        _clip_cache[key] = load_area_clip(p, area)
+    clip = _clip_cache[key]
+    if clip is None:
+        return nbs
+    return [nb for nb in nbs if "bbox" not in nb or clip.distance(box(*nb["bbox"])) < _ADJACENCY_THRESHOLD]
+
+
 def run(
     all_sources: list[Province],
     selected: list[Province],
@@ -231,13 +254,15 @@ def run(
     for p in all_sources:
         code = p["code"]
         if code not in matched_codes:
-            if "neighbours" in sources_data.get(code, {}):
-                del sources_data[code]["neighbours"]
-                changed += 1
+            stale = [k for k in ("neighbours", "bbox") if k in sources_data.get(code, {})]
+            for k in stale:
+                del sources_data[code][k]
+            changed += bool(stale)
         else:
-            nbs_sorted = sorted(neighbours[code])
-            if sources_data.get(code, {}).get("neighbours") != nbs_sorted:
-                sources_data[code]["neighbours"] = nbs_sorted
+            entry = sources_data[code]
+            new = {"neighbours": sorted(neighbours[code]), "bbox": [round(v, 4) for v in geoms[code].bounds]}
+            if any(entry.get(k) != v for k, v in new.items()):
+                entry.update(new)
                 changed += 1
     SOURCES_JSON.write_text(json.dumps(sources_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"  [write  ] {changed} provinces updated in sources.json")
