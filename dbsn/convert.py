@@ -22,7 +22,7 @@ from dbsn.common import (
     rel,
 )
 from dbsn.extract import ExtendTask, ExtractRawTask, fgb_path
-from dbsn.layers import LayerDef, get_layers
+from dbsn.layers import LayerDef, area_key, get_layers, layer_slug, resolve_layer_names
 from utils.dag import Task, run_dag
 from utils.writers import translate_features, write_osm_items
 
@@ -62,6 +62,12 @@ def _layer_items(p: Province, layer: LayerDef, region: str, override_map: dict |
         yield from translate_features(src, translate_fn, overrides)
 
 
+def convert_out_path(p: Province, area: str | None, layer_names: list[str], ext: str) -> Path:
+    """OSM output of a province: {code}_{date}{_area}{_layers}.{ext}; the layer part is empty for all layers."""
+    area_slug = f"_{area_key(area)}" if area else ""
+    return OSM_DIR / f"{p['code']}_{p['date']}{area_slug}{layer_slug(layer_names)}.{ext}"
+
+
 def _convert_province(
     p: Province,
     overwrite: bool,
@@ -72,8 +78,10 @@ def _convert_province(
     area: str | None = None,
 ) -> bool | None:
     active = layers or get_layers()
-    edifc_fgb = fgb_path(p["code"], p["date"], "edifc")
-    if not edifc_fgb.exists():
+    base_fgb = next(
+        (f for f in (fgb_path(p["code"], p["date"], ld.name) for ld in active) if f.exists()), None
+    )
+    if base_fgb is None:
         print(f"  [skip   ] {p['code']} {p['province']}: FGB not found, run extract first")
         return None
 
@@ -84,8 +92,7 @@ def _convert_province(
         ext = "osm.bz2"
     else:
         ext = "osm"
-    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
-    out_path = OSM_DIR / f"{p['code']}_{p['date']}{area_slug}.{ext}"
+    out_path = convert_out_path(p, area, [ld.name for ld in active], ext)
 
     if out_path.exists() and not overwrite:
         size = out_path.stat().st_size // 1024
@@ -113,7 +120,7 @@ def _convert_province(
             schema = {"geometry": "Unknown", "properties": dict.fromkeys(all_tag_keys, "str")}
             total = 0
             # geojson: write each layer separately (fiona doesn't support chained append easily)
-            with fiona.open(str(edifc_fgb)) as first_src:
+            with fiona.open(str(base_fgb)) as first_src:
                 crs = first_src.crs
             with fiona.open(str(out_path), "w", driver="GeoJSON", schema=schema, crs=crs) as dst:
                 schema_props = set(all_tag_keys)
@@ -126,10 +133,10 @@ def _convert_province(
                         total += 1
             count_written = total
         else:
-            # Determine bounds from edifc FGB (covers the primary layer; good enough for bbox)
+            # Bounds from the first available layer FGB (good enough for the bbox)
             bounds = None
             try:
-                with fiona.open(str(edifc_fgb)) as src:
+                with fiona.open(str(base_fgb)) as src:
                     bounds = src.bounds
             except Exception as exc:
                 print(f"  [warn   ] {p['code']} {p['province']}: bounds unavailable ({exc}), omitting bbox",
@@ -175,7 +182,8 @@ class ConvertTask(Task):
         self._fmt = fmt
         self._compress = compress
         self._extend = extend
-        self._layer_names = layer_names  # None = all; stored as names (picklable)
+        # Resolved per province (CLI selection, else layers.yaml); names keep the task picklable
+        self._layer_names = resolve_layer_names(prov, area, layer_names)
         self._area = area
 
     @property
@@ -186,10 +194,7 @@ class ConvertTask(Task):
         print(f"  [{self.label}] {self._prov['code']} {self._prov['province']}: cached")
 
     def _active_layers(self) -> list[LayerDef]:
-        all_layers = get_layers()
-        if self._layer_names is None:
-            return all_layers
-        return [ld for ld in all_layers if ld.name in self._layer_names]
+        return [ld for ld in get_layers() if ld.name in self._layer_names]
 
     def dependencies(self) -> list[Task]:
         deps: list[Task] = [ExtractRawTask(self._prov, self._overwrite_steps, self._layer_names)]
@@ -197,13 +202,12 @@ class ConvertTask(Task):
             for nb_code in self._prov.get("neighbours", []):
                 nb = self._sources.get(nb_code)
                 if nb:
-                    deps.append(ExtendTask(self._prov, nb, self._overwrite_steps))
+                    deps.append(ExtendTask(self._prov, nb, self._overwrite_steps, self._layer_names))
         return deps
 
     def _out_path(self) -> Path:
         ext = "geojson" if self._fmt == "geojson" else ("osm.bz2" if self._compress else "osm")
-        area_slug = f"_{self._area.lower().replace(' ', '_')}" if self._area else ""
-        return OSM_DIR / f"{self._prov['code']}_{self._prov['date']}{area_slug}.{ext}"
+        return convert_out_path(self._prov, self._area, self._layer_names, ext)
 
     def skip_if(self) -> bool:
         return self._out_path().exists()
@@ -278,9 +282,8 @@ def main() -> None:
 
     overwrite_steps = parse_overwrite(args.overwrite)
     sources_by_code = {p["code"]: p for p in read_sources()}
-    active_names = selected_names  # None = all layers
     tasks = [
-        ConvertTask(prov, sources_by_code, overwrite_steps, args.format, args.compress, layer_names=active_names,
+        ConvertTask(prov, sources_by_code, overwrite_steps, args.format, args.compress, layer_names=selected_names,
                     area=args.area)
         for prov in args.provinces
     ]

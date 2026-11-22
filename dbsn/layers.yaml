@@ -1,0 +1,19 @@
+# Layers processed when --layers is not given, by every dbsn command.
+# Most specific wins, a list replaces the less specific one (it is not merged):
+#   areas (area slug, e.g. marghera) → provinces (code) → regions (sources.json region) → defaults
+# --layers a,b on the command line overrides all of it; --layers all selects every layer.
+#
+# Layers: edifc, edi_min, mn_ind, mn_mau, attr_sp, sc_dis, ponte, galler
+#
+#   areas:
+#     marghera: [edifc, attr_sp]
+#   provinces:
+#     VE: [edifc, edi_min]
+
+defaults: [edifc]
+
+regions: {}
+
+provinces: {}
+
+areas: {}

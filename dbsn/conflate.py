@@ -31,10 +31,12 @@ from dbsn.common import (
     OSM_DIR,
     Province,
     add_area_arg,
+    add_layers_arg,
     add_max_weight_arg,
     add_osm_area_arg,
     load_combined_clip,
     parse_args,
+    parse_layers,
     parse_overwrite,
     read_sources,
 )
@@ -42,6 +44,7 @@ from dbsn.convert import ConvertTask
 from dbsn.download_pbf import DownloadPbfTask, find_pbf
 from dbsn.download_pbf import _normalize as _pbf_normalize
 from dbsn.edits import absorb_edits, drop_edited_copies, edited_sibling, pending_edits, unedited_copies
+from dbsn.layers import area_key, get_layers, layer_slug, resolve_layer_names
 from dbsn.legacy_imports import (
     compile_patterns,
     fetch_changeset_meta,
@@ -883,10 +886,11 @@ def _geom_to_exterior_coords(geom) -> list[tuple[float, float]]:
 # Output path helpers
 # ---------------------------------------------------------------------------
 
-def _slugs(area: str | None, osm_area: str | None) -> tuple[str, str]:
-    """(area_slug, out_slug). out_slug = area + --osm-area slug names conflate dirs and files,
-    so slugged runs never shadow unslugged outputs; area_slug alone names the convert output."""
-    area_slug = f"_{area.lower().replace(' ', '_')}" if area else ""
+def _slugs(area: str | None, osm_area: str | None, layers: str = "") -> tuple[str, str]:
+    """(area_slug, out_slug). area_slug = area + layer slug and names the convert output;
+    out_slug adds the --osm-area slug and names conflate dirs and files, so slugged runs
+    never shadow unslugged outputs."""
+    area_slug = (f"_{area_key(area)}" if area else "") + layers
     osm_area_slug = f"_osm-{_pbf_normalize(osm_area)}" if osm_area else ""
     return area_slug, area_slug + osm_area_slug
 
@@ -928,9 +932,10 @@ def _run(
     specificity: dict[str, list[str]],
     review_identical: bool = False,
     osm_area: str | None = None,
+    layer_names: list[str] | None = None,
 ) -> None:
     code, date = p["code"], p["date"]
-    area_slug, out_slug = _slugs(area, osm_area)
+    area_slug, out_slug = _slugs(area, osm_area, layer_slug(resolve_layer_names(p, area, layer_names)))
     out_dir = _conflate_dir(code, date, out_slug)
 
     # Find DBSN OSM output (newest of .osm / .osm.bz2)
@@ -1482,6 +1487,7 @@ class ConflateTask(Task):
         review_identical: bool = False,
         osm_area: str | None = None,
         apply_edits: bool = True,
+        layer_names: list[str] | None = None,
     ) -> None:
         self._apply_edits = apply_edits
         self._prov = prov
@@ -1493,16 +1499,19 @@ class ConflateTask(Task):
         self._extend = extend
         self._review_identical = review_identical
         self._osm_area = osm_area
+        self._layer_names = resolve_layer_names(prov, area, layer_names)
 
     @property
     def name(self) -> str:
         return f"conflate:{self._prov['code']}"
 
+    def _out_slug(self) -> str:
+        return _slugs(self._area, self._osm_area, layer_slug(self._layer_names))[1]
+
     def _review_files(self) -> list[Path]:
         code, date = self._prov["code"], self._prov["date"]
-        _, out_slug = _slugs(self._area, self._osm_area)
         suffixes = ("_new.osm", "_osm_only.osm", "_conflated.osm", "_ambiguous.osm")
-        return [_out(code, date, s, out_slug) for s in suffixes]
+        return [_out(code, date, s, self._out_slug()) for s in suffixes]
 
     def _pending_edits(self) -> list[Path]:
         review = [f for f in self._review_files() if f.exists()]
@@ -1510,8 +1519,7 @@ class ConflateTask(Task):
 
     def skip_if(self) -> bool:
         code, date = self._prov["code"], self._prov["date"]
-        _, out_slug = _slugs(self._area, self._osm_area)
-        outputs = [*self._review_files(), _out(code, date, "_changes.osc", out_slug)]
+        outputs = [*self._review_files(), _out(code, date, "_changes.osc", self._out_slug())]
         # existence plus freshness vs the PBF — a re-downloaded/newer PBF
         # (server date roll, --overwrite pbf) invalidates existing outputs;
         # JOSM-saved edits must be absorbed, and an unsaved `_edited` copy of an older run refreshed: both need a run
@@ -1521,7 +1529,7 @@ class ConflateTask(Task):
     def dependencies(self) -> list[Task]:
         return [
             ConvertTask(self._prov, self._sources, self._overwrite_steps,
-                        self._fmt, self._compress, self._extend, area=self._area),
+                        self._fmt, self._compress, self._extend, layer_names=self._layer_names, area=self._area),
             DownloadPbfTask(self._prov, area=self._area),
         ]
 
@@ -1539,14 +1547,13 @@ class ConflateTask(Task):
             print(f"  [edits  ] {p['code']}: dropped {len(dropped)} edited copies")
             pending = []
         if pending:
-            _, out_slug = _slugs(self._area, self._osm_area)
-            n = absorb_edits(pending, _out(p["code"], p["date"], "_resolutions.json", out_slug))
+            n = absorb_edits(pending, _out(p["code"], p["date"], "_resolutions.json", self._out_slug()))
             print(f"  [edits  ] {p['code']}: absorbed {n} resolutions from "
                   f"{', '.join(edited_sibling(f).name for f in pending)}")
         # an `_edited` copy nobody saved holds no edits: refresh it, or JOSM keeps showing the previous run
         stale = unedited_copies([f for f in self._review_files() if f.exists()])
         _run(p, "conflate" in self._overwrite_steps or bool(pending), self._area, config, specificity,
-             review_identical=self._review_identical, osm_area=self._osm_area)
+             review_identical=self._review_identical, osm_area=self._osm_area, layer_names=self._layer_names)
         for f in (*pending, *stale):  # absorbed edits live in the resolutions now: hand back a fresh copy
             if f.exists():
                 shutil.copy2(f, edited_sibling(f))
@@ -1559,6 +1566,7 @@ class ConflateTask(Task):
 def _extra_args(parser) -> None:
     add_area_arg(parser)
     add_osm_area_arg(parser)
+    add_layers_arg(parser, [ld.name for ld in get_layers()])
     add_max_weight_arg(parser)
     parser.add_argument(
         "--download",
@@ -1600,11 +1608,15 @@ def main() -> None:
 
     sources = read_sources()
     sources_by_code = {p["code"]: p for p in sources}
+    try:
+        selected_names = parse_layers(args.layers, [ld.name for ld in get_layers()])
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
 
     tasks = [
         ConflateTask(prov, sources_by_code, overwrite_steps, area=args.area,
                      review_identical=args.review_identical, osm_area=args.osm_area,
-                     apply_edits=args.apply_edits)
+                     apply_edits=args.apply_edits, layer_names=selected_names)
         for prov in args.provinces
     ]
     results = run_dag(tasks, args.max_weight, overwrite_steps)
@@ -1612,7 +1624,7 @@ def main() -> None:
     host = resolve_josm_host(args.josm, args.no_josm)
     if host:
         targets = josm_target_provinces(args.provinces, results, explicit=bool(args.josm))
-        _josm_open(targets, args.area, args.osm_area, host)
+        _josm_open(targets, args.area, args.osm_area, host, selected_names)
 
 
 def _has_data(path: Path) -> bool:
@@ -1620,12 +1632,14 @@ def _has_data(path: Path) -> bool:
     return any(elem.tag in ("node", "way", "relation") for _, elem in ET.iterparse(path, events=("start",)))
 
 
-def _josm_open(provinces: list, area: str | None, osm_area: str | None, host: str) -> None:
+def _josm_open(
+    provinces: list, area: str | None, osm_area: str | None, host: str, layer_names: list[str] | None = None,
+) -> None:
     """Open conflate review files + PBF as JOSM layers via remote control."""
-    _, out_slug = _slugs(area, osm_area)
     pbf_slug = _pbf_normalize(area) if area else ""
     for p in provinces:
         code, date = p["code"], p["date"]
+        _, out_slug = _slugs(area, osm_area, layer_slug(resolve_layer_names(p, area, layer_names)))
         pbf = find_pbf(code, pbf_slug)
         layers = []  # (name, path, url) in open order
         if pbf is not None:

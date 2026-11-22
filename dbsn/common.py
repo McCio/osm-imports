@@ -311,15 +311,18 @@ def add_layers_arg(parser: argparse.ArgumentParser, all_names: list[str]) -> Non
     parser.add_argument(
         "--layers",
         metavar="LAYER[,LAYER...]",
-        help=f"Comma-separated layer names to process (default: all). Available: {', '.join(all_names)}",
+        help="Comma-separated layer names to process, or 'all' (default: dbsn/layers.yaml, "
+             f"else edifc only). Available: {', '.join(all_names)}",
     )
 
 
 def parse_layers(raw: str | None, all_names: list[str]) -> list[str] | None:
-    """Return selected layer names, or None meaning 'all'."""
+    """Return selected layer names; None means 'not given, use layers.yaml'."""
     if raw is None:
         return None
     names = [s.strip() for s in raw.split(",") if s.strip()]
+    if names == ["all"]:
+        return list(all_names)
     unknown = [n for n in names if n not in all_names]
     if unknown:
         raise ValueError(f"Unknown layer(s): {', '.join(unknown)}. Available: {', '.join(all_names)}")

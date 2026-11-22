@@ -27,7 +27,7 @@ from dbsn.common import (
     rel,
 )
 from dbsn.download import DownloadTask
-from dbsn.layers import LayerSpec, get_layer_specs
+from dbsn.layers import LayerSpec, get_layer_specs, resolve_layer_names
 from utils.dag import Task, run_dag
 
 _WGS84 = CRS.from_epsg(4326)
@@ -269,9 +269,14 @@ def _extract_province(
         return False
 
 
-def extend_pair(p1: Province, p2: Province, overwrite: bool = False) -> None:
-    """Write cross-boundary ext FGBs for all supports_extension layers for the province pair."""
-    ext_specs = [s for s in get_layer_specs() if s.supports_extension]
+def extend_pair(
+    p1: Province, p2: Province, overwrite: bool = False, layer_names: list[str] | None = None,
+) -> None:
+    """Write cross-boundary ext FGBs for the supports_extension layers (among layer_names) of the province pair."""
+    ext_specs = [
+        s for s in get_layer_specs()
+        if s.supports_extension and (layer_names is None or s.name in layer_names)
+    ]
     c1, c2 = (p1["code"], p2["code"]) if p1["code"] < p2["code"] else (p2["code"], p1["code"])
     if p1["code"] != c1:
         p1, p2 = p2, p1
@@ -367,12 +372,25 @@ class ExtendTask(Task):
     run_in_process = True
     step = "extend"
 
-    def __init__(self, p1: Province, p2: Province, overwrite_steps: frozenset[str] = frozenset()) -> None:
+    def __init__(
+        self,
+        p1: Province,
+        p2: Province,
+        overwrite_steps: frozenset[str] = frozenset(),
+        layer_names: list[str] | None = None,
+    ) -> None:
         if p1["code"] > p2["code"]:
             p1, p2 = p2, p1
         self._p1 = p1
         self._p2 = p2
         self._overwrite_steps = overwrite_steps
+        self._layer_names = layer_names  # None = all
+
+    def _ext_specs(self) -> list[LayerSpec]:
+        return [
+            s for s in get_layer_specs()
+            if s.supports_extension and (self._layer_names is None or s.name in self._layer_names)
+        ]
 
     @property
     def name(self) -> str:
@@ -382,21 +400,22 @@ class ExtendTask(Task):
         print(f"  [{self.label}] {self._p1['code']}↔{self._p2['code']}: cached")
 
     def dependencies(self) -> list[Task]:
+        names = [s.name for s in self._ext_specs()]
         return [
-            ExtractRawTask(self._p1, self._overwrite_steps),
-            ExtractRawTask(self._p2, self._overwrite_steps),
+            ExtractRawTask(self._p1, self._overwrite_steps, names),
+            ExtractRawTask(self._p2, self._overwrite_steps, names),
         ]
 
     def skip_if(self) -> bool:
         c1, c2 = self._p1["code"], self._p2["code"]
         d1, d2 = self._p1["date"], self._p2["date"]
-        return all(
-            (BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_{s.name}.fgb").exists()
-            for s in get_layer_specs() if s.supports_extension
-        )
+        return all((BUILDINGS_DIR / f"{c1}_{c2}_{d1}_{d2}_{s.name}.fgb").exists() for s in self._ext_specs())
 
     def run(self) -> None:
-        extend_pair(self._p1, self._p2, overwrite="extend" in self._overwrite_steps)
+        extend_pair(
+            self._p1, self._p2, overwrite="extend" in self._overwrite_steps,
+            layer_names=[s.name for s in self._ext_specs()],
+        )
 
 
 def run(provinces: list[Province], overwrite: bool, extend: bool = True) -> None:
@@ -433,20 +452,21 @@ def main() -> None:
 
     try:
         selected_names = parse_layers(args.layers, all_layer_names)
+        names_by_code = {
+            prov["code"]: resolve_layer_names(prov, None, selected_names) for prov in args.provinces
+        }
     except ValueError as exc:
         sys.exit(f"error: {exc}")
-    active_specs = [s for s in get_layer_specs() if selected_names is None or s.name in selected_names]
-
-    active_names = [s.name for s in active_specs]
 
     tasks: list[Task] = []
     for prov in args.provinces:
-        tasks.append(ExtractRawTask(prov, overwrite_steps, layer_names=active_names))
+        names = names_by_code[prov["code"]]
+        tasks.append(ExtractRawTask(prov, overwrite_steps, layer_names=names))
         if not args.no_extend:
             for nb_code in prov.get("neighbours", []):
                 nb = sources_by_code.get(nb_code)
                 if nb:
-                    tasks.append(ExtendTask(prov, nb, overwrite_steps))
+                    tasks.append(ExtendTask(prov, nb, overwrite_steps, names))
 
     run_dag(tasks, args.max_weight, overwrite_steps)
 

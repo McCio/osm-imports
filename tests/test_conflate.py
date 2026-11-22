@@ -452,6 +452,8 @@ def test_slugs_and_output_paths():
     assert conflate._slugs("Isola dei Petroli", None) == ("_isola_dei_petroli",) * 2
     assert conflate._slugs(None, "Isola dei Petroli") == ("", "_osm-isoladeipetroli")
     assert conflate._slugs("Marghera", "r/6628636") == ("_marghera", "_marghera_osm-r6628636")
+    assert conflate._slugs("Marghera", "r/6628636", "_edifc") == ("_marghera_edifc", "_marghera_edifc_osm-r6628636")
+    assert conflate._slugs(None, None, "_edifc") == ("_edifc", "_edifc")
     out = conflate._out("VE", "d", "_new.osm", "_osm-x")
     assert out.parent.name == "VE_d_osm-x" and out.name == "VE_d_osm-x_new.osm"
 

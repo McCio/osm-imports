@@ -95,10 +95,10 @@ jobs:
         run: uv run dbsn-download --province "$PROVINCE"
 
       - name: Run extract
-        run: uv run dbsn-extract --province "$PROVINCE"
+        run: uv run dbsn-extract --province "$PROVINCE" --layers all
 
       - name: Run convert
-        run: uv run dbsn-convert --province "$PROVINCE" --compress
+        run: uv run dbsn-convert --province "$PROVINCE" --compress --layers all
 
       - name: Check for OSM output
         id: osm_check
@@ -113,7 +113,7 @@ jobs:
 
       - name: Run validate
         if: always() && steps.osm_check.outputs.found != '0'
-        run: uv run dbsn-validate --province "$PROVINCE" --delete-invalid
+        run: uv run dbsn-validate --province "$PROVINCE" --delete-invalid --layers all
 
       - name: Save frontier to release
         if: always()

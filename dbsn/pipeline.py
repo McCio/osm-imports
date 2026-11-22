@@ -7,12 +7,15 @@ from dbsn import neighbours as neighbours_mod
 from dbsn.common import (
     SOURCES_JSON,
     add_area_arg,
+    add_layers_arg,
     add_max_weight_arg,
     filter_provinces,
     parse_args,
+    parse_layers,
     parse_overwrite,
     read_sources,
 )
+from dbsn.layers import get_layers
 from dbsn.validate import ValidateTask
 from utils.dag import run_dag
 
@@ -28,6 +31,7 @@ def _extra_args(p) -> None:
              f"(default: {neighbours_mod._OVERPASS_URL})",
     )
     add_area_arg(p)
+    add_layers_arg(p, [ld.name for ld in get_layers()])
     add_max_weight_arg(p)
 
 
@@ -39,7 +43,10 @@ def main() -> None:
     )
 
     overwrite_steps = parse_overwrite(args.overwrite)
-
+    try:
+        selected_names = parse_layers(args.layers, [ld.name for ld in get_layers()])
+    except ValueError as exc:
+        sys.exit(f"error: {exc}")
     # Step 0: Discover
     if "discover" in overwrite_steps or not SOURCES_JSON.exists():
         discover.run("discover" in overwrite_steps)
@@ -72,6 +79,7 @@ def main() -> None:
             compress=args.compress,
             extend=not args.no_extend,
             area=args.area,
+            layer_names=selected_names,
         )
         for prov in provinces
     ]
